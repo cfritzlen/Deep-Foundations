@@ -15,6 +15,7 @@ export default function ShaftLog({ pile, job, onExport }) {
   const [tab, setTab] = useState('drill')
   const [modal, setModal] = useState(null) // {kind, ...}
   const [busy, setBusy] = useState(false)
+  const [muteMix, setMuteMix] = useState(false) // "dismiss for rest of pour"
 
   const reload = () =>
     getPileBundle(pile.id).then(setBundle).catch((e) => setErr(e.message))
@@ -214,7 +215,8 @@ export default function ShaftLog({ pile, job, onExport }) {
           )}
 
           {cageSet && !pourStart && (
-            <BigButton color="green" disabled={busy} onClick={run(() => addEvent(p.id, 'pour_start', {}))}>
+            <BigButton color="green" disabled={busy}
+              onClick={run(async () => { setMuteMix(false); await addEvent(p.id, 'pour_start', {}) })}>
               Start pour
             </BigButton>
           )}
@@ -339,6 +341,11 @@ export default function ShaftLog({ pile, job, onExport }) {
       {modal?.kind === 'ticket' && (
         <TicketModal
           mix={p.mix}
+          muteMix={muteMix}
+          onMuteRestOfPour={() => setMuteMix(true)}
+          onMismatch={async (found) => {
+            await addEvent(p.id, 'mix_warning', { found, expected: `${p.mix.code} (${p.mix.strength_psi} psi)` })
+          }}
           onClose={() => setModal(null)}
           onSave={run(async (fields, photo) => {
             await addTicket(p.id, fields, photo)
@@ -352,6 +359,7 @@ export default function ShaftLog({ pile, job, onExport }) {
           onCancel={() => setModal(null)}
           onSubmit={run(async (v) => {
             await addEvent(p.id, 'pour_end', { total_cy: v })
+            setMuteMix(false)
             setModal(null)
           })}
         />
@@ -392,11 +400,12 @@ function InspectionModal({ result, onClose, onSave }) {
   )
 }
 
-function TicketModal({ mix, onClose, onSave }) {
+function TicketModal({ mix, muteMix, onMuteRestOfPour, onMismatch, onClose, onSave }) {
   const [f, setF] = useState({})
   const [photo, setPhoto] = useState(null)
   const [scanning, setScanning] = useState(false)
   const [scanNote, setScanNote] = useState(null)
+  const [warn, setWarn] = useState(null) // mismatch popup
   const set = (k) => (e) => setF((o) => ({ ...o, [k]: e.target.value }))
   const num = (v) => (v === '' || v == null ? null : Number(v))
 
@@ -415,9 +424,14 @@ function TicketModal({ mix, onClose, onSave }) {
         const codeMatch = r.mix_code && mix.code &&
           r.mix_code.toLowerCase().replace(/[^a-z0-9]/g, '').includes(mix.code.toLowerCase().replace(/[^a-z0-9]/g, ''))
         const psiMatch = r.strength_psi && Number(r.strength_psi) === Number(mix.strength_psi)
-        setScanNote(codeMatch || psiMatch
-          ? { ok: true, text: `✓ Ticket mix ${r.mix_code ?? r.strength_psi + ' psi'} matches ${mix.code}` }
-          : { ok: false, text: `⚠ Ticket shows ${r.mix_code ?? ''} ${r.strength_psi ? r.strength_psi + ' psi' : ''} — this shaft calls for ${mix.code} (${mix.strength_psi} psi)` })
+        if (codeMatch || psiMatch) {
+          setScanNote({ ok: true, text: `✓ Ticket mix ${r.mix_code ?? r.strength_psi + ' psi'} matches ${mix.code}` })
+        } else {
+          const found = `${r.mix_code ?? ''}${r.strength_psi ? ` (${r.strength_psi} psi)` : ''}`.trim() || 'an unreadable mix'
+          setScanNote({ ok: false, text: `⚠ Ticket shows ${found} — this shaft calls for ${mix.code} (${mix.strength_psi} psi)` })
+          onMismatch?.(found)
+          if (!muteMix) setWarn({ found })
+        }
       } else {
         setScanNote({ ok: true, text: '✓ Ticket read — check the fields below' })
       }
@@ -470,6 +484,29 @@ function TicketModal({ mix, onClose, onSave }) {
         }, photo)}>
         Save truck
       </BigButton>
+
+      {warn && (
+        <div className="overlay" style={{ zIndex: 70, alignItems: 'center', padding: 16 }}>
+          <div className="card" style={{ borderTop: '8px solid var(--red)', maxWidth: 440, width: '100%', margin: 0 }}>
+            <h3 className="cond" style={{ color: 'var(--red)', fontSize: '1.5rem', textTransform: 'uppercase', marginBottom: 8 }}>
+              ⚠ Mix mismatch
+            </h3>
+            <p style={{ marginBottom: 6 }}>
+              This ticket shows <b>{warn.found}</b>.
+            </p>
+            <p style={{ marginBottom: 14 }}>
+              This shaft calls for <b>{mix.code} ({mix.strength_psi} psi)</b>. The mismatch has been
+              stamped into the log.
+            </p>
+            <BigButton color="red" onClick={() => setWarn(null)}>
+              Dismiss this ticket
+            </BigButton>
+            <BigButton color="ghost" onClick={() => { onMuteRestOfPour?.(); setWarn(null) }}>
+              Dismiss for rest of pour
+            </BigButton>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }
@@ -489,6 +526,7 @@ const EVENT_LABEL = {
   drive_start: 'Started driving',
   drive_end: 'End of drive',
   pile_run: 'Pile ran',
+  mix_warning: 'MIX WARNING',
   signature: 'Log signed',
   note: 'Note',
 }
@@ -505,7 +543,7 @@ export function Timeline({ events }) {
             <span className="t">
               {new Date(e.ts).toLocaleDateString([], { month: 'numeric', day: 'numeric' })} {fmtTime(e.ts)}
             </span>
-            <span className={`what ${e.event_type.startsWith('obstruction') ? 'obst' : ''} ${e.event_type === 'pile_failed' ? 'fail' : ''}`}>
+            <span className={`what ${e.event_type.startsWith('obstruction') ? 'obst' : ''} ${e.event_type === 'pile_failed' || e.event_type === 'mix_warning' ? 'fail' : ''}`}>
               <b>{EVENT_LABEL[e.event_type] ?? e.event_type}</b> {describeEvent(e)}
             </span>
           </li>
@@ -535,6 +573,7 @@ export function describeEvent(e) {
     case 'drive_end': return `at ${d.end_depth_ft ?? '?'} ft${d.criteria_met ? ` — ${d.criteria_met}` : ''}`
     case 'pile_run': return `from ${d.from_ft} ft to ${d.to_ft} ft`
     case 'pile_failed': return `${d.reason ?? ''}${d.depth_ft != null ? ` at ${d.depth_ft} ft` : ''}`
+    case 'mix_warning': return `ticket showed ${d.found} — pile calls for ${d.expected}`
     case 'signature': return `${d.role ?? ''} — ${d.name ?? ''}`
     case 'note': return d.text ?? ''
     default: return ''

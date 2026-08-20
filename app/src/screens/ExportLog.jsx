@@ -10,7 +10,7 @@ const EVENT_LABEL = {
   inspection: 'Inspection', socket_extension: 'Socket extended',
   cage_set: 'Cage set', pour_start: 'Pour started', pour_end: 'Pour ended',
   drive_start: 'Started driving', drive_end: 'End of drive',
-  pile_run: 'Pile ran', pile_failed: 'PILE FAILED',
+  pile_run: 'Pile ran', pile_failed: 'PILE FAILED', mix_warning: 'MIX WARNING',
   rock_reached: 'Top of rock', signature: 'Log signed', note: 'Note',
 }
 
