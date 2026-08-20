@@ -215,16 +215,17 @@ export default function ExportLog({ pile, job }) {
           <>
             <h4>Concrete Placement{!blank && ` — ${totalCy} CY total`}</h4>
             <table className="grid"><thead>
-              <tr><th>Time</th><th>Truck</th><th>Ticket</th><th>CY</th><th>Slump</th><th>Air</th><th>Temp</th><th>Cyl</th><th>{blank ? 'Notes' : 'Ticket photo'}</th></tr>
+              <tr><th>Time</th><th>Truck</th><th>Ticket</th><th>CY</th><th>Cum CY</th><th>Slump</th><th>Air</th><th>Temp</th><th>Cyl</th><th>{blank ? 'Notes' : 'Ticket photo'}</th></tr>
             </thead><tbody>
               {blank
-                ? emptyRows(8, 9)
-                : tickets.map((t) => (
+                ? emptyRows(8, 10)
+                : tickets.map((t, i) => (
                     <tr key={t.id}>
                       <td>{fmtTime(t.ts)}</td>
                       <td>{t.truck_no ?? '—'}</td>
                       <td>{t.ticket_no ?? '—'}</td>
                       <td>{t.volume_cy ?? '—'}</td>
+                      <td>{tickets.slice(0, i + 1).reduce((s, x) => s + Number(x.volume_cy || 0), 0)}</td>
                       <td>{t.slump_in != null ? t.slump_in + '"' : '—'}</td>
                       <td>{t.air_pct != null ? t.air_pct + '%' : '—'}</td>
                       <td>{t.temp_f != null ? t.temp_f + '°F' : '—'}</td>

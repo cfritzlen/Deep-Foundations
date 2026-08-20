@@ -194,6 +194,18 @@ async function compressToBase64(file) {
   return dataUrl.split(',')[1]
 }
 
+export async function updateTicket(pileId, id, fields, photoFile) {
+  const patch = { ...fields }
+  if (photoFile) {
+    const ext = (photoFile.name?.split('.').pop() || 'jpg').toLowerCase()
+    const photo_path = `${pileId}/${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('bedrock-tickets').upload(photo_path, photoFile)
+    if (error) throw new Error('Photo upload failed: ' + error.message)
+    patch.photo_path = photo_path
+  }
+  return ok(await supabase.from('bedrock_concrete_tickets').update(patch).eq('id', id).select().single())
+}
+
 export function ticketPhotoUrl(path) {
   if (!path) return null
   return supabase.storage.from('bedrock-tickets').getPublicUrl(path).data.publicUrl

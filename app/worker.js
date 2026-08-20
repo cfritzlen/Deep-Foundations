@@ -16,14 +16,20 @@ const TicketSchema = z.object({
 })
 
 const PROMPT = `This is a photo of a concrete delivery ticket (batch ticket) from a
-ready-mix truck at a construction site. Extract:
+ready-mix truck at a construction site. Values may be printed OR handwritten —
+read both carefully. Extract:
 - truck_no: the truck number
 - ticket_no: the ticket/load number
-- volume_cy: the volume of THIS load in cubic yards (not the cumulative total)
+- volume_cy: the volume of THIS load in cubic yards. Tickets label this many
+  ways: "LOAD QTY", "THIS LOAD", "QTY", "LOAD", "YDS", "CY", "DEL QTY", or a
+  bare number near the mix line. It is often handwritten. If both a load
+  quantity and a cumulative/total-to-date quantity appear, return the load
+  quantity (usually the smaller number). Only return null if no per-load
+  quantity is anywhere on the ticket.
 - mix_code: the mix design code or ID as printed
 - strength_psi: the design strength in psi, if shown
 - supplier: the ready-mix supplier or plant name
-Use null for any field you cannot read confidently — do not guess.`
+For fields other than volume_cy, use null when you cannot read them confidently.`
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {

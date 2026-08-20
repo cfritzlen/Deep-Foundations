@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   getPileBundle, getEquipment, startDay, endDay, addEvent, updateEvent, updatePile,
-  setPileStatus, addTicket, ticketPhotoUrl, scanTicket, currentDepth, isDrilling,
+  setPileStatus, addTicket, updateTicket, ticketPhotoUrl, scanTicket, currentDepth, isDrilling,
   openObstruction, isPouring, fmtTime, fmtDate, todayStr,
 } from '../lib/db.js'
 import { BigButton, Modal, NumPad, Chips, NoteFab, Loading, ErrBox } from '../components/ui.jsx'
@@ -16,6 +16,7 @@ export default function ShaftLog({ pile, job, onExport }) {
   const [modal, setModal] = useState(null) // {kind, ...}
   const [busy, setBusy] = useState(false)
   const [muteMix, setMuteMix] = useState(false) // "dismiss for rest of pour"
+  const [viewPhoto, setViewPhoto] = useState(null) // full-screen ticket photo
 
   const reload = () =>
     getPileBundle(pile.id).then(setBundle).catch((e) => setErr(e.message))
@@ -235,22 +236,33 @@ export default function ShaftLog({ pile, job, onExport }) {
 
           {tickets.length > 0 && (
             <div className="card">
-              {tickets.map((t) => (
-                <div key={t.id} className="ticketrow">
-                  {t.photo_path && <img src={ticketPhotoUrl(t.photo_path)} alt="" />}
-                  <div style={{ flex: 1 }}>
-                    <div className="tno">Truck {t.truck_no || '—'} · Ticket {t.ticket_no || '—'} · {t.volume_cy ?? '—'} CY</div>
-                    <div className="muted">
-                      {t.slump_in != null ? `Slump ${t.slump_in}"` : ''}
-                      {t.air_pct != null ? ` · Air ${t.air_pct}%` : ''}
-                      {t.temp_f != null ? ` · ${t.temp_f}°F` : ''}
-                      {t.cylinders ? ` · ${t.cylinders} cyl` : ''}
+              {tickets.map((t, i) => {
+                const cum = tickets.slice(0, i + 1).reduce((s, x) => s + Number(x.volume_cy || 0), 0)
+                return (
+                  <div key={t.id} className="ticketrow" style={{ cursor: 'pointer' }}
+                    onClick={() => setModal({ kind: 'ticket', ticket: t })}>
+                    {t.photo_path && (
+                      <img src={ticketPhotoUrl(t.photo_path)} alt=""
+                        onClick={(e) => { e.stopPropagation(); setViewPhoto(ticketPhotoUrl(t.photo_path)) }} />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div className="tno">Truck {t.truck_no || '—'} · Ticket {t.ticket_no || '—'} · {t.volume_cy ?? '—'} CY</div>
+                      <div className="muted">
+                        {t.slump_in != null ? `Slump ${t.slump_in}" · ` : ''}
+                        {t.air_pct != null ? `Air ${t.air_pct}% · ` : ''}
+                        {t.temp_f != null ? `${t.temp_f}°F · ` : ''}
+                        {t.cylinders ? `${t.cylinders} cyl · ` : ''}
+                        cum {cum} CY
+                      </div>
                     </div>
+                    <span className="muted">{fmtTime(t.ts)}</span>
                   </div>
-                  <span className="muted">{fmtTime(t.ts)}</span>
-                </div>
-              ))}
+                )
+              })}
               <div className="kv" style={{ marginTop: 6 }}><span>Total placed</span><b>{totalCy} CY</b></div>
+              <div className="muted" style={{ fontSize: '0.78rem', marginTop: 4 }}>
+                Tap a truck to add test results · tap its photo to view the ticket
+              </div>
             </div>
           )}
 
@@ -341,17 +353,25 @@ export default function ShaftLog({ pile, job, onExport }) {
       {modal?.kind === 'ticket' && (
         <TicketModal
           mix={p.mix}
+          existing={modal.ticket ?? null}
           muteMix={muteMix}
           onMuteRestOfPour={() => setMuteMix(true)}
           onMismatch={async (found) => {
             await addEvent(p.id, 'mix_warning', { found, expected: `${p.mix.code} (${p.mix.strength_psi} psi)` })
           }}
+          onViewPhoto={setViewPhoto}
           onClose={() => setModal(null)}
           onSave={run(async (fields, photo) => {
-            await addTicket(p.id, fields, photo)
+            if (modal.ticket) await updateTicket(p.id, modal.ticket.id, fields, photo)
+            else await addTicket(p.id, fields, photo)
             setModal(null)
           })}
         />
+      )}
+      {viewPhoto && (
+        <div className="overlay photoview" onClick={() => setViewPhoto(null)}>
+          <img src={viewPhoto} alt="Concrete ticket" />
+        </div>
       )}
       {modal?.kind === 'pour_end' && (
         <NumPad title="End pour" sub={`Tickets so far total ${totalCy} CY`} unit="CY total" initial={totalCy || ''}
@@ -400,8 +420,16 @@ function InspectionModal({ result, onClose, onSave }) {
   )
 }
 
-function TicketModal({ mix, muteMix, onMuteRestOfPour, onMismatch, onClose, onSave }) {
-  const [f, setF] = useState({})
+function TicketModal({ mix, existing, muteMix, onMuteRestOfPour, onMismatch, onViewPhoto, onClose, onSave }) {
+  const [f, setF] = useState(() => existing ? {
+    truck_no: existing.truck_no ?? '',
+    ticket_no: existing.ticket_no ?? '',
+    volume_cy: existing.volume_cy ?? '',
+    slump_in: existing.slump_in ?? '',
+    air_pct: existing.air_pct ?? '',
+    temp_f: existing.temp_f ?? '',
+    cylinders: existing.cylinders ?? '',
+  } : {})
   const [photo, setPhoto] = useState(null)
   const [scanning, setScanning] = useState(false)
   const [scanNote, setScanNote] = useState(null)
@@ -442,13 +470,29 @@ function TicketModal({ mix, muteMix, onMuteRestOfPour, onMismatch, onClose, onSa
     }
   }
 
+  const previewUrl = photo ? URL.createObjectURL(photo) : existing?.photo_path ? ticketPhotoUrl(existing.photo_path) : null
+
+  // plain function (not a nested component) so inputs keep focus across renders
+  const field = (label, k, mode) => (
+    <label className="fwrap" key={k}>
+      <span>{label}</span>
+      <input className="field" inputMode={mode} value={f[k] ?? ''} onChange={set(k)} />
+    </label>
+  )
+
   return (
-    <Modal title="Concrete truck" sub="Snap the ticket — everything else is optional." onClose={onClose}>
+    <Modal title={existing ? `Truck ${existing.truck_no || ''} — edit` : 'Concrete truck'}
+      sub={existing ? 'Add test results or fix anything, then save.' : 'Snap the ticket — everything else is optional.'}
+      onClose={onClose}>
       <label className="bigbtn ghost" style={{ display: 'block', textAlign: 'center', lineHeight: 1.3 }}>
-        {photo ? `📷 ${photo.name}` : '📷 Photo of ticket'}
+        {photo ? '📷 Retake photo' : existing?.photo_path ? '📷 Replace photo' : '📷 Photo of ticket'}
         <input type="file" accept="image/*" capture="environment" hidden
           onChange={(e) => { setPhoto(e.target.files?.[0] ?? null); setScanNote(null) }} />
       </label>
+      {previewUrl && (
+        <img className="ticket-preview" src={previewUrl} alt="Ticket"
+          onClick={() => onViewPhoto?.(previewUrl)} />
+      )}
       {photo && (
         <BigButton color="gold" disabled={scanning} onClick={doScan}>
           {scanning ? 'Reading ticket…' : '✨ Scan ticket'}
@@ -461,16 +505,18 @@ function TicketModal({ mix, muteMix, onMuteRestOfPour, onMismatch, onClose, onSa
           {scanNote.text}
         </div>
       )}
-      <input className="field" placeholder="Truck #" value={f.truck_no ?? ''} onChange={set('truck_no')} />
-      <input className="field" placeholder="Ticket #" value={f.ticket_no ?? ''} onChange={set('ticket_no')} />
-      <input className="field" placeholder="Volume (CY)" inputMode="decimal" value={f.volume_cy ?? ''} onChange={set('volume_cy')} />
       <div className="btnrow">
-        <input className="field" placeholder='Slump (in)' inputMode="decimal" value={f.slump_in ?? ''} onChange={set('slump_in')} />
-        <input className="field" placeholder="Air %" inputMode="decimal" value={f.air_pct ?? ''} onChange={set('air_pct')} />
+        {field('Truck #', 'truck_no')}
+        {field('Ticket #', 'ticket_no')}
+      </div>
+      {field('Volume — this load (CY)', 'volume_cy', 'decimal')}
+      <div className="btnrow">
+        {field('Slump (in)', 'slump_in', 'decimal')}
+        {field('Air (%)', 'air_pct', 'decimal')}
       </div>
       <div className="btnrow">
-        <input className="field" placeholder="Temp °F" inputMode="decimal" value={f.temp_f ?? ''} onChange={set('temp_f')} />
-        <input className="field" placeholder="Cylinders" inputMode="numeric" value={f.cylinders ?? ''} onChange={set('cylinders')} />
+        {field('Temp (°F)', 'temp_f', 'decimal')}
+        {field('Cylinders', 'cylinders', 'numeric')}
       </div>
       <BigButton color="gold"
         onClick={() => onSave({
