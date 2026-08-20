@@ -9,6 +9,9 @@
 -- tables (bedrock_* only).
 -- ============================================================
 
+-- Seeded sample times below are wall-clock Eastern time.
+set timezone = 'America/New_York';
+
 -- ---- start clean (bedrock_ demo tables only) ----
 drop table if exists bedrock_concrete_tickets cascade;
 drop table if exists bedrock_blow_counts cascade;

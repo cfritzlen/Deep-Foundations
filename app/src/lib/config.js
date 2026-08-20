@@ -1,6 +1,6 @@
 // Supabase connection. The publishable (anon) key is safe to ship in the app.
 export const SUPABASE_URL = 'https://fzjzzujrjqjacbfbwcvd.supabase.co'
-export const SUPABASE_ANON_KEY = '' // <- paste the publishable key here
+export const SUPABASE_ANON_KEY = 'sb_publishable_YRx71gNyoYHdPZTDe1-Efg_xiQGqSmN'
 
 export const COMPANY = {
   name: 'Bedrock & Sons',
