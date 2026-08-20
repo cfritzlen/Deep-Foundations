@@ -1,0 +1,479 @@
+import React, { useEffect, useState } from 'react'
+import {
+  getPileBundle, getEquipment, startDay, endDay, addEvent, updateEvent, updatePile,
+  setPileStatus, addTicket, ticketPhotoUrl, currentDepth, isDrilling, openObstruction,
+  isPouring, fmtTime, fmtDate, todayStr,
+} from '../lib/db.js'
+import { BigButton, Modal, NumPad, Chips, NoteFab, Loading, ErrBox } from '../components/ui.jsx'
+
+const OBSTRUCTION_TYPES = ['Boulder', 'Timber', 'Old concrete', 'Debris', 'Unknown']
+
+export default function ShaftLog({ pile, job, onExport }) {
+  const [bundle, setBundle] = useState(null)
+  const [equip, setEquip] = useState([])
+  const [err, setErr] = useState(null)
+  const [tab, setTab] = useState('drill')
+  const [modal, setModal] = useState(null) // {kind, ...}
+  const [busy, setBusy] = useState(false)
+
+  const reload = () =>
+    getPileBundle(pile.id).then(setBundle).catch((e) => setErr(e.message))
+
+  useEffect(() => {
+    reload()
+    getEquipment(job.id).then(setEquip).catch(() => {})
+  }, [pile.id])
+
+  if (err) return <div className="screen"><ErrBox>{err}</ErrBox></div>
+  if (!bundle) return <div className="screen"><Loading /></div>
+
+  const { pile: p, days, events, tickets } = bundle
+  const depth = currentDepth(events)
+  const drilling = isDrilling(events)
+  const obst = openObstruction(events)
+  const pouring = isPouring(events)
+  const requiredSocket = Number(p.required_socket_depth_ft ?? 0)
+  const socketExt = Number(p.socket_extension_ft ?? 0)
+  const today = days.find((d) => d.work_date === todayStr())
+  const cageSet = [...events].reverse().find((e) => e.event_type === 'cage_set')
+  const pourStart = [...events].reverse().find((e) => e.event_type === 'pour_start')
+  const pourEnd = [...events].reverse().find((e) => e.event_type === 'pour_end')
+  const inspections = events.filter((e) => e.event_type === 'inspection')
+  const lastInspection = inspections[inspections.length - 1]
+  const totalCy = tickets.reduce((s, t) => s + Number(t.volume_cy || 0), 0)
+
+  const run = (fn) => async (...args) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await fn(...args)
+      await reload()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const ensureStarted = async () => {
+    if (!today?.day_start) await startDay(p.id, { equipmentId: equip[0]?.id ?? null })
+    if (p.status === 'not_started') await setPileStatus(p.id, 'in_progress')
+  }
+
+  const hitObstruction = run(async () => {
+    await ensureStarted()
+    const ev = await addEvent(p.id, 'obstruction_hit', { depth_ft: depth, type: 'Unknown' })
+    setModal({ kind: 'obst_type', eventId: ev.id, data: ev.data })
+  })
+
+  return (
+    <div className="screen">
+      {/* status band */}
+      <div className="statusband">
+        <div>
+          <div className="lbl">Shaft</div>
+          <div className="big">{p.label}</div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div className="lbl">Depth</div>
+          <div className="big gold">{depth} ft</div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: '0.8rem', lineHeight: 1.5 }}>
+          <div>Casing req: <b>{p.required_casing_depth_ft} ft</b></div>
+          <div>
+            Socket req:{' '}
+            <b>
+              {requiredSocket + socketExt} ft
+              {socketExt > 0 && <span style={{ color: 'var(--gold)' }}> (+{socketExt})</span>}
+            </b>
+          </div>
+        </div>
+      </div>
+
+      {!today?.day_start && (
+        <BigButton color="gold" disabled={busy} onClick={run(() => ensureStarted())}>
+          Start day
+          <small>Stamps today's start time</small>
+        </BigButton>
+      )}
+
+      {/* tabs */}
+      <div className="tabs">
+        <button className={`tab ${tab === 'drill' ? 'active' : ''}`} onClick={() => setTab('drill')}>Drilling</button>
+        <button className={`tab ${tab === 'inspect' ? 'active' : ''}`} onClick={() => setTab('inspect')}>
+          Inspection {lastInspection?.data?.result === 'pass' && <span className="done">✓</span>}
+        </button>
+        <button className={`tab ${tab === 'pour' ? 'active' : ''}`} onClick={() => setTab('pour')}>
+          Cage &amp; Pour {pourEnd && <span className="done">✓</span>}
+        </button>
+      </div>
+
+      {/* ---------------- DRILLING ---------------- */}
+      {tab === 'drill' && (
+        <>
+          {obst ? (
+            <BigButton color="orange" disabled={busy}
+              onClick={run(() => addEvent(p.id, 'obstruction_cleared', { depth_ft: depth }))}>
+              Obstruction cleared
+              <small>Hit at {fmtTime(obst.ts)} — {obst.data?.type ?? 'unknown'}</small>
+            </BigButton>
+          ) : (
+            <BigButton color="orange" disabled={busy} onClick={hitObstruction}>
+              ⚠ Obstruction
+              <small>One tap — stamps time &amp; depth now</small>
+            </BigButton>
+          )}
+
+          {!drilling ? (
+            <BigButton disabled={busy} onClick={() => setModal({ kind: 'drill_start' })}>
+              Start drilling
+            </BigButton>
+          ) : (
+            <BigButton color="green" disabled={busy} onClick={() => setModal({ kind: 'drill_end' })}>
+              Stop drilling
+            </BigButton>
+          )}
+
+          <BigButton color="ghost" disabled={busy} onClick={() => setModal({ kind: 'socket_ext' })}>
+            + Extend socket
+            <small>After a failed inspection</small>
+          </BigButton>
+        </>
+      )}
+
+      {/* ---------------- INSPECTION ---------------- */}
+      {tab === 'inspect' && (
+        <>
+          <div className="btnrow">
+            <BigButton color="green" disabled={busy}
+              onClick={() => setModal({ kind: 'inspection', result: 'pass' })}>
+              Socket pass
+            </BigButton>
+            <BigButton color="red" disabled={busy}
+              onClick={() => setModal({ kind: 'inspection', result: 'fail' })}>
+              Socket fail
+            </BigButton>
+          </div>
+          {inspections.length > 0 && (
+            <div className="card">
+              <ul className="tl">
+                {inspections.map((e) => (
+                  <li key={e.id}>
+                    <span className="t">{fmtTime(e.ts)}</span>
+                    <span className={`what ${e.data.result === 'pass' ? 'pass' : 'fail'}`}>
+                      <b>{e.data.result === 'pass' ? 'PASS' : 'FAIL'}</b> — {e.data.inspector || 'inspector n/a'}
+                      {e.data.note ? ` · ${e.data.note}` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ---------------- CAGE & POUR ---------------- */}
+      {tab === 'pour' && (
+        <>
+          {p.mix && (
+            <div className="card">
+              <div className="kv"><span>Mix design</span><b>{p.mix.code} — {p.mix.strength_psi} psi</b></div>
+              <div className="kv"><span className="muted">{p.mix.description}</span></div>
+              <div className="kv"><span>Supplier</span><b>{p.mix.supplier}</b></div>
+            </div>
+          )}
+
+          {!cageSet ? (
+            <BigButton disabled={busy} onClick={run(async () => { await ensureStarted(); await addEvent(p.id, 'cage_set', {}) })}>
+              Cage set
+              <small>Stamps time now</small>
+            </BigButton>
+          ) : (
+            <div className="card">
+              <div className="kv"><span>Cage set</span><b>{fmtTime(cageSet.ts)}</b></div>
+              {!pourStart && (
+                <div className="kv">
+                  <span>Time since cage set</span>
+                  <b className={minutesSince(cageSet.ts) > 60 ? 'warn' : ''}>{minutesSince(cageSet.ts)} min</b>
+                </div>
+              )}
+            </div>
+          )}
+
+          {cageSet && !pourStart && (
+            <BigButton color="green" disabled={busy} onClick={run(() => addEvent(p.id, 'pour_start', {}))}>
+              Start pour
+            </BigButton>
+          )}
+
+          {pouring && (
+            <>
+              <BigButton color="gold" disabled={busy} onClick={() => setModal({ kind: 'ticket' })}>
+                + Concrete truck
+                <small>Photo of ticket, tests</small>
+              </BigButton>
+              <BigButton color="green" disabled={busy} onClick={() => setModal({ kind: 'pour_end' })}>
+                End pour
+              </BigButton>
+            </>
+          )}
+
+          {tickets.length > 0 && (
+            <div className="card">
+              {tickets.map((t) => (
+                <div key={t.id} className="ticketrow">
+                  {t.photo_path && <img src={ticketPhotoUrl(t.photo_path)} alt="" />}
+                  <div style={{ flex: 1 }}>
+                    <div className="tno">Truck {t.truck_no || '—'} · Ticket {t.ticket_no || '—'} · {t.volume_cy ?? '—'} CY</div>
+                    <div className="muted">
+                      {t.slump_in != null ? `Slump ${t.slump_in}"` : ''}
+                      {t.air_pct != null ? ` · Air ${t.air_pct}%` : ''}
+                      {t.temp_f != null ? ` · ${t.temp_f}°F` : ''}
+                      {t.cylinders ? ` · ${t.cylinders} cyl` : ''}
+                    </div>
+                  </div>
+                  <span className="muted">{fmtTime(t.ts)}</span>
+                </div>
+              ))}
+              <div className="kv" style={{ marginTop: 6 }}><span>Total placed</span><b>{totalCy} CY</b></div>
+            </div>
+          )}
+
+          {pourEnd && p.status !== 'complete' && (
+            <BigButton color="green" disabled={busy} onClick={run(() => setPileStatus(p.id, 'complete'))}>
+              Mark shaft complete
+            </BigButton>
+          )}
+        </>
+      )}
+
+      {/* timeline + days + export */}
+      <Timeline events={events} />
+      <DaysCard days={days} />
+      <div className="btnrow">
+        {today?.day_start && !today?.day_end && (
+          <BigButton color="ghost" disabled={busy} onClick={run(() => endDay(p.id))}>
+            End day
+          </BigButton>
+        )}
+        <BigButton color="ghost" onClick={onExport}>View / export log</BigButton>
+      </div>
+
+      <NoteFab onSave={async (text) => { await addEvent(p.id, 'note', { text }); await reload() }} />
+
+      {/* ---------------- modals ---------------- */}
+      {modal?.kind === 'drill_start' && (
+        <NumPad title="Start drilling" sub="Starting depth" unit="ft" initial={depth || ''}
+          submitLabel="Start"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            await ensureStarted()
+            await addEvent(p.id, 'drill_start', { start_depth_ft: v })
+            setModal(null)
+          })}
+        />
+      )}
+      {modal?.kind === 'drill_end' && (
+        <NumPad title="Stop drilling" sub="Depth reached" unit="ft" initial={depth || ''}
+          submitLabel="Stop"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            await addEvent(p.id, 'drill_end', { end_depth_ft: v })
+            setModal(null)
+          })}
+        />
+      )}
+      {modal?.kind === 'socket_ext' && (
+        <NumPad title="Extend socket" sub={`Current requirement: ${requiredSocket + socketExt} ft of socket`}
+          unit="ft added" initial="5" submitLabel="Add"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            await updatePile(p.id, { socket_extension_ft: socketExt + v })
+            await addEvent(p.id, 'socket_extension', { added_ft: v, new_required_socket_ft: requiredSocket + socketExt + v })
+            setModal(null)
+          })}
+        />
+      )}
+      {modal?.kind === 'obst_type' && (
+        <ObstructionTypeModal
+          onPick={run(async (type, note) => {
+            await updateEvent(modal.eventId, { ...modal.data, type, ...(note ? { note } : {}) })
+            setModal(null)
+          })}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'inspection' && (
+        <InspectionModal result={modal.result}
+          onClose={() => setModal(null)}
+          onSave={run(async (inspector, note) => {
+            await ensureStarted()
+            await addEvent(p.id, 'inspection', { result: modal.result, inspector, note })
+            setModal(modal.result === 'fail' ? { kind: 'socket_ext' } : null)
+          })}
+        />
+      )}
+      {modal?.kind === 'ticket' && (
+        <TicketModal
+          onClose={() => setModal(null)}
+          onSave={run(async (fields, photo) => {
+            await addTicket(p.id, fields, photo)
+            setModal(null)
+          })}
+        />
+      )}
+      {modal?.kind === 'pour_end' && (
+        <NumPad title="End pour" sub={`Tickets so far total ${totalCy} CY`} unit="CY total" initial={totalCy || ''}
+          submitLabel="End pour"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            await addEvent(p.id, 'pour_end', { total_cy: v })
+            setModal(null)
+          })}
+        />
+      )}
+    </div>
+  )
+}
+
+function minutesSince(ts) {
+  return Math.round((Date.now() - new Date(ts).getTime()) / 60000)
+}
+
+function ObstructionTypeModal({ onPick, onClose }) {
+  const [type, setType] = useState(null)
+  const [note, setNote] = useState('')
+  return (
+    <Modal title="Obstruction logged ✓" sub="Time and depth are already stamped. What is it?" onClose={onClose}>
+      <Chips options={OBSTRUCTION_TYPES} value={type} onChange={setType} />
+      <input className="field" placeholder="Optional note" value={note} onChange={(e) => setNote(e.target.value)} />
+      <BigButton color="gold" disabled={!type} onClick={() => onPick(type, note.trim())}>Save</BigButton>
+    </Modal>
+  )
+}
+
+function InspectionModal({ result, onClose, onSave }) {
+  const [inspector, setInspector] = useState('')
+  const [note, setNote] = useState('')
+  return (
+    <Modal title={result === 'pass' ? 'Socket inspection — PASS' : 'Socket inspection — FAIL'}
+      sub={result === 'fail' ? "You'll be asked how much socket to add next." : ''}
+      onClose={onClose}>
+      <input className="field" placeholder="Inspector (name / firm)" value={inspector} onChange={(e) => setInspector(e.target.value)} />
+      <input className="field" placeholder="Optional note" value={note} onChange={(e) => setNote(e.target.value)} />
+      <BigButton color={result === 'pass' ? 'green' : 'red'} onClick={() => onSave(inspector.trim(), note.trim())}>
+        Record {result}
+      </BigButton>
+    </Modal>
+  )
+}
+
+function TicketModal({ onClose, onSave }) {
+  const [f, setF] = useState({})
+  const [photo, setPhoto] = useState(null)
+  const set = (k) => (e) => setF((o) => ({ ...o, [k]: e.target.value }))
+  const num = (v) => (v === '' || v == null ? null : Number(v))
+  return (
+    <Modal title="Concrete truck" sub="Snap the ticket — everything else is optional." onClose={onClose}>
+      <label className="bigbtn ghost" style={{ display: 'block', textAlign: 'center', lineHeight: 1.3 }}>
+        {photo ? `📷 ${photo.name}` : '📷 Photo of ticket'}
+        <input type="file" accept="image/*" capture="environment" hidden
+          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+      </label>
+      <input className="field" placeholder="Truck #" value={f.truck_no ?? ''} onChange={set('truck_no')} />
+      <input className="field" placeholder="Ticket #" value={f.ticket_no ?? ''} onChange={set('ticket_no')} />
+      <input className="field" placeholder="Volume (CY)" inputMode="decimal" value={f.volume_cy ?? ''} onChange={set('volume_cy')} />
+      <div className="btnrow">
+        <input className="field" placeholder='Slump (in)' inputMode="decimal" value={f.slump_in ?? ''} onChange={set('slump_in')} />
+        <input className="field" placeholder="Air %" inputMode="decimal" value={f.air_pct ?? ''} onChange={set('air_pct')} />
+      </div>
+      <div className="btnrow">
+        <input className="field" placeholder="Temp °F" inputMode="decimal" value={f.temp_f ?? ''} onChange={set('temp_f')} />
+        <input className="field" placeholder="Cylinders" inputMode="numeric" value={f.cylinders ?? ''} onChange={set('cylinders')} />
+      </div>
+      <BigButton color="gold"
+        onClick={() => onSave({
+          truck_no: f.truck_no || null,
+          ticket_no: f.ticket_no || null,
+          volume_cy: num(f.volume_cy),
+          slump_in: num(f.slump_in),
+          air_pct: num(f.air_pct),
+          temp_f: num(f.temp_f),
+          cylinders: num(f.cylinders),
+        }, photo)}>
+        Save truck
+      </BigButton>
+    </Modal>
+  )
+}
+
+const EVENT_LABEL = {
+  drill_start: 'Started drilling',
+  drill_end: 'Stopped drilling',
+  obstruction_hit: 'OBSTRUCTION',
+  obstruction_cleared: 'Obstruction cleared',
+  inspection: 'Inspection',
+  socket_extension: 'Socket extended',
+  cage_set: 'Cage set',
+  pour_start: 'Pour started',
+  pour_end: 'Pour ended',
+  pile_failed: 'PILE FAILED',
+  drive_start: 'Started driving',
+  drive_end: 'End of drive',
+  note: 'Note',
+}
+
+export function Timeline({ events }) {
+  if (!events.length) return null
+  return (
+    <div className="card">
+      <ul className="tl">
+        {events.map((e) => (
+          <li key={e.id}>
+            <span className="t">
+              {new Date(e.ts).toLocaleDateString([], { month: 'numeric', day: 'numeric' })} {fmtTime(e.ts)}
+            </span>
+            <span className={`what ${e.event_type.startsWith('obstruction') ? 'obst' : ''} ${e.event_type === 'pile_failed' ? 'fail' : ''}`}>
+              <b>{EVENT_LABEL[e.event_type] ?? e.event_type}</b> {describeEvent(e)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+export function describeEvent(e) {
+  const d = e.data || {}
+  switch (e.event_type) {
+    case 'drill_start': return `at ${d.start_depth_ft ?? '?'} ft`
+    case 'drill_end': return `at ${d.end_depth_ft ?? '?'} ft${d.note ? ` — ${d.note}` : ''}`
+    case 'obstruction_hit': return `at ${d.depth_ft ?? '?'} ft — ${d.type ?? 'unknown'}${d.note ? ` (${d.note})` : ''}`
+    case 'obstruction_cleared': return `at ${d.depth_ft ?? '?'} ft`
+    case 'inspection': return `${(d.result || '').toUpperCase()}${d.inspector ? ` — ${d.inspector}` : ''}${d.note ? ` · ${d.note}` : ''}`
+    case 'socket_extension': return `+${d.added_ft} ft (socket now ${d.new_required_socket_ft} ft)`
+    case 'pour_end': return d.total_cy != null ? `${d.total_cy} CY placed` : ''
+    case 'drive_start': return `at ${d.start_depth_ft ?? 0} ft`
+    case 'drive_end': return `at ${d.end_depth_ft ?? '?'} ft${d.criteria_met ? ` — ${d.criteria_met}` : ''}`
+    case 'pile_failed': return `${d.reason ?? ''}${d.depth_ft != null ? ` at ${d.depth_ft} ft` : ''}`
+    case 'note': return d.text ?? ''
+    default: return ''
+  }
+}
+
+export function DaysCard({ days }) {
+  if (!days.length) return null
+  return (
+    <div className="card">
+      {days.map((d) => (
+        <div key={d.id} className="kv">
+          <span>{fmtDate(d.work_date)}</span>
+          <b>
+            {d.day_start ? fmtTime(d.day_start) : '—'} – {d.day_end ? fmtTime(d.day_end) : 'working'}
+            {d.equipment ? ` · ${d.equipment.name.split('—')[0].trim()}` : ''}
+          </b>
+        </div>
+      ))}
+    </div>
+  )
+}
