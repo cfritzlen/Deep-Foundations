@@ -2,6 +2,9 @@
   // Cloudflare Workers config — static site (Vite build output)
   "name": "bedrock",
   "compatibility_date": "2026-08-01",
+  "routes": [
+    { "pattern": "bedrock.hardhatbenchmark.com", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
