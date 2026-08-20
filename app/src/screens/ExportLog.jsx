@@ -294,57 +294,89 @@ function SignModal({ taken, onClose, onSave }) {
   )
 }
 
-// Small elevation sketch of the pile, drawn from the log data.
+// Elevation sketch of the pile with engineering dimension lines.
+const SK = { navy: '#16233d', gold: '#c98f12', gray: '#8b93a1' }
+const skLabel = { fontSize: 8, fill: SK.navy, fontFamily: 'Barlow, sans-serif' }
+
+// Vertical dimension line with arrowheads and a two-line label beside it.
+function DimLine({ x, y1, y2, name, value, strong }) {
+  if (y2 - y1 < 6) return null
+  const mid = (y1 + y2) / 2
+  const color = strong ? SK.gold : SK.navy
+  return (
+    <g>
+      <line x1={x} y1={y1 + 1} x2={x} y2={y2 - 1} stroke={color} strokeWidth="1"
+        markerStart={`url(#dimarrow${strong ? '-g' : ''})`} markerEnd={`url(#dimarrow${strong ? '-g' : ''})`} />
+      <text x={x + 5} y={mid - 1} style={{ ...skLabel, fill: SK.gray }}>{name}</text>
+      <text x={x + 5} y={mid + 8} style={{ ...skLabel, fill: color, fontWeight: 700 }}>{value}</text>
+    </g>
+  )
+}
+
+function SketchDefs() {
+  return (
+    <defs>
+      <marker id="dimarrow" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto-start-reverse">
+        <path d="M0.5,1 L6,3.5 L0.5,6" fill="none" stroke={SK.navy} strokeWidth="1" />
+      </marker>
+      <marker id="dimarrow-g" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto-start-reverse">
+        <path d="M0.5,1 L6,3.5 L0.5,6" fill="none" stroke={SK.gold} strokeWidth="1" />
+      </marker>
+      <pattern id="rockhatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke={SK.gray} strokeWidth="1" />
+      </pattern>
+    </defs>
+  )
+}
+
+function ExtLine({ y, from, to }) {
+  return <line x1={from} y1={y} x2={to} y2={y} stroke={SK.gray} strokeWidth="0.6" strokeDasharray="2 2" />
+}
+
 function PileSketch({ p, isShaft, blank, finalDepth, topOfRock, socketTotal, tipElev }) {
-  const navy = '#16233d', gold = '#c98f12', gray = '#8b93a1'
-  const W = 190, H = 290, groundY = 26, drawH = 235
-  const label = { fontSize: 8.5, fill: navy, fontFamily: 'Barlow, sans-serif' }
+  const W = 232, H = 300
+  const svgStyle = { flex: '0 0 auto', margin: '0 auto', display: 'block', maxWidth: '100%' }
+  const v = (n) => (blank ? '____' : `${n} ft`)
 
   if (isShaft) {
+    const groundY = 26, drawH = 250
     const casing = Number(p.required_casing_depth_ft ?? 0)
     const D = Math.max(finalDepth, casing + socketTotal, 1)
     const s = drawH / D
     const y = (d) => groundY + d * s
     const rock = Math.min(topOfRock, D)
-    const socketDrilled = Math.max(0, finalDepth - rock)
-    const xL = 30, xR = 74
+    const bottom = y(finalDepth || D)
+    const xL = 36, xR = 82
     return (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flex: '0 0 auto' }}>
-        <defs>
-          <pattern id="rockhatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="6" stroke={gray} strokeWidth="1" />
-          </pattern>
-        </defs>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={svgStyle}>
+        <SketchDefs />
         {/* ground */}
-        <line x1="6" y1={groundY} x2="88" y2={groundY} stroke={navy} strokeWidth="1.5" />
-        {[10, 16, 22].map((x) => <line key={x} x1={x} y1={groundY} x2={x - 4} y2={groundY + 5} stroke={navy} strokeWidth="1" />)}
-        {/* rock on both sides of the shaft */}
-        <rect x="6" y={y(rock)} width={xL - 6} height={y(D) - y(rock)} fill="url(#rockhatch)" />
-        <rect x={xR} y={y(rock)} width={88 - xR} height={y(D) - y(rock)} fill="url(#rockhatch)" />
-        <line x1="6" y1={y(rock)} x2="88" y2={y(rock)} stroke={gray} strokeWidth="1" />
-        {/* shaft */}
-        <rect x={xL} y={groundY} width={xR - xL} height={y(finalDepth || D) - groundY} fill={blank ? 'none' : '#eef1f6'} stroke={navy} strokeWidth="1.2" />
-        {/* casing (heavier walls) */}
-        <line x1={xL - 1.5} y1={groundY} x2={xL - 1.5} y2={y(casing)} stroke={navy} strokeWidth="3" />
-        <line x1={xR + 1.5} y1={groundY} x2={xR + 1.5} y2={y(casing)} stroke={navy} strokeWidth="3" />
-        {/* socket zone */}
-        {!blank && socketDrilled > 0 && (
-          <rect x={xL} y={y(rock)} width={xR - xL} height={y(finalDepth) - y(rock)} fill="#dfe6f0" stroke={navy} strokeWidth="1.2" />
+        <line x1="8" y1={groundY} x2="96" y2={groundY} stroke={SK.navy} strokeWidth="1.5" />
+        {[12, 18, 24].map((x) => <line key={x} x1={x} y1={groundY} x2={x - 4} y2={groundY + 5} stroke={SK.navy} strokeWidth="1" />)}
+        {/* rock beside the shaft */}
+        <rect x="8" y={y(rock)} width={xL - 8} height={bottom - y(rock)} fill="url(#rockhatch)" />
+        <rect x={xR} y={y(rock)} width={96 - xR} height={bottom - y(rock)} fill="url(#rockhatch)" />
+        <line x1="8" y1={y(rock)} x2="96" y2={y(rock)} stroke={SK.gray} strokeWidth="1" />
+        <text x="10" y={y(rock) + 10} style={{ ...skLabel, fill: SK.gray, fontSize: 7 }}>ROCK</text>
+        {/* shaft + casing walls + socket */}
+        <rect x={xL} y={groundY} width={xR - xL} height={bottom - groundY} fill={blank ? 'none' : '#eef1f6'} stroke={SK.navy} strokeWidth="1.2" />
+        <line x1={xL - 1.5} y1={groundY} x2={xL - 1.5} y2={y(casing)} stroke={SK.navy} strokeWidth="3" />
+        <line x1={xR + 1.5} y1={groundY} x2={xR + 1.5} y2={y(casing)} stroke={SK.navy} strokeWidth="3" />
+        {!blank && finalDepth > rock && (
+          <rect x={xL} y={y(rock)} width={xR - xL} height={y(finalDepth) - y(rock)} fill="#dfe6f0" stroke={SK.navy} strokeWidth="1.2" />
         )}
-        {/* labels */}
-        <text x="95" y={groundY + 3} style={label}>Grade — 0 ft</text>
-        <line x1="88" y1={y(casing)} x2="93" y2={y(casing)} stroke={gray} strokeWidth="0.8" />
-        <text x="95" y={y(casing) + 3} style={label}>Casing {casing} ft</text>
-        <line x1="88" y1={y(rock)} x2="93" y2={y(rock)} stroke={gray} strokeWidth="0.8" />
-        <text x="95" y={y(rock) + 11} style={label}>Rock @ {blank ? '____' : `${rock} ft`}</text>
-        <text x="95" y={(y(rock) + y(D)) / 2 + 3} style={{ ...label, fill: gold, fontWeight: 700 }}>
-          Socket {blank ? '____' : `${socketDrilled} ft`}
-        </text>
-        <text x="95" y={(y(rock) + y(D)) / 2 + 13} style={{ ...label, fill: gray }}>req {socketTotal} ft</text>
-        <line x1="88" y1={y(finalDepth || D)} x2="93" y2={y(finalDepth || D)} stroke={gray} strokeWidth="0.8" />
-        <text x="95" y={y(finalDepth || D) + 3} style={{ ...label, fontWeight: 700 }}>
-          Tip {blank ? '____' : `${finalDepth} ft`}
-        </text>
+        {/* extension lines at each boundary */}
+        <ExtLine y={groundY} from={98} to={224} />
+        <ExtLine y={y(casing)} from={xR + 4} to={162} />
+        <ExtLine y={y(rock)} from={98} to={224} />
+        <ExtLine y={bottom} from={xR + 4} to={224} />
+        {/* dimensions */}
+        <DimLine x={108} y1={groundY} y2={y(casing)} name="Casing" value={v(casing)} />
+        <DimLine x={108} y1={y(rock)} y2={bottom} name="Socket" strong
+          value={blank ? '____' : `${Math.max(0, finalDepth - rock)} ft`} />
+        <DimLine x={168} y1={groundY} y2={y(rock)} name="Overburden" value={v(rock)} />
+        <DimLine x={204} y1={groundY} y2={bottom} name="Total" value={v(finalDepth || D)} />
+        {!blank && <text x={98} y={bottom + 10} style={{ ...skLabel, fill: SK.gray }}>Socket req. {socketTotal} ft</text>}
       </svg>
     )
   }
@@ -352,32 +384,33 @@ function PileSketch({ p, isShaft, blank, finalDepth, topOfRock, socketTotal, tip
   // driven pile
   const L = Number(p.length_ft ?? 60)
   const E = finalDepth || 0
+  const stickup = blank ? 0 : Math.max(0, L - E)
+  const drawH = 240
   const D = Math.max(L, E, 1)
-  const s = (drawH - 14) / D
-  const gy = groundY + 14
+  const s = drawH / D
+  const gy = 26 + stickup * s
   const y = (d) => gy + d * s
-  const stickup = Math.max(0, L - E)
-  const xL = 46, xR = 60
+  const topY = gy - stickup * s
+  const tipY = y(blank ? L : E)
+  const xL = 48, xR = 62
   return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flex: '0 0 auto' }}>
-      <line x1="6" y1={gy} x2="88" y2={gy} stroke={navy} strokeWidth="1.5" />
-      {[10, 16, 22, 78, 84].map((x) => <line key={x} x1={x} y1={gy} x2={x - 4} y2={gy + 5} stroke={navy} strokeWidth="1" />)}
-      {/* pile */}
-      <rect x={xL} y={gy - stickup * s} width={xR - xL} height={(blank ? L : E + stickup) * s}
-        fill={blank ? 'none' : '#eef1f6'} stroke={navy} strokeWidth="1.2" />
-      <line x1={(xL + xR) / 2} y1={gy - stickup * s} x2={(xL + xR) / 2} y2={y(blank ? L : E)} stroke={navy} strokeWidth="0.7" strokeDasharray="3 2" />
-      {/* labels */}
-      <text x="95" y={gy + 3} style={label}>Grade — 0 ft</text>
-      <text x="95" y={gy - 8} style={{ ...label, fill: gray }}>{p.description} · {L} ft long</text>
-      <text x="95" y={(gy + y(blank ? L : E)) / 2} style={{ ...label, fill: gold, fontWeight: 700 }}>
-        Embedment {blank ? '____' : `${E} ft`}
-      </text>
-      <line x1="88" y1={y(blank ? L : E)} x2="93" y2={y(blank ? L : E)} stroke={gray} strokeWidth="0.8" />
-      <text x="95" y={y(blank ? L : E) + 3} style={{ ...label, fontWeight: 700 }}>
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={svgStyle}>
+      <SketchDefs />
+      <line x1="8" y1={gy} x2="96" y2={gy} stroke={SK.navy} strokeWidth="1.5" />
+      {[12, 18, 24, 84, 90].map((x) => <line key={x} x1={x} y1={gy} x2={x - 4} y2={gy + 5} stroke={SK.navy} strokeWidth="1" />)}
+      <rect x={xL} y={topY} width={xR - xL} height={tipY - topY} fill={blank ? 'none' : '#eef1f6'} stroke={SK.navy} strokeWidth="1.2" />
+      <line x1={(xL + xR) / 2} y1={topY} x2={(xL + xR) / 2} y2={tipY} stroke={SK.navy} strokeWidth="0.7" strokeDasharray="3 2" />
+      {/* extension lines */}
+      <ExtLine y={topY} from={xR + 4} to={224} />
+      <ExtLine y={gy} from={98} to={224} />
+      <ExtLine y={tipY} from={xR + 4} to={224} />
+      {/* dimensions */}
+      {stickup > 0 && <DimLine x={108} y1={topY} y2={gy} name="Stick-up" value={`${stickup} ft`} />}
+      <DimLine x={108} y1={gy} y2={tipY} name="Embedment" strong value={v(blank ? L : E)} />
+      <DimLine x={168} y1={topY} y2={tipY} name="Pile length" value={`${L} ft`} />
+      <text x={98} y={tipY + 12} style={{ ...skLabel, fontWeight: 700 }}>
         Tip {blank ? '____' : `${E} ft`}
-      </text>
-      <text x="95" y={y(blank ? L : E) + 13} style={{ ...label, fill: gray }}>
-        {tipElev != null ? `elev ${tipElev} ft` : `req tip elev ${p.required_tip_elev_ft ?? '—'} ft`}
+        {!blank && (tipElev != null ? ` · elev ${tipElev} ft` : ` · req elev ${p.required_tip_elev_ft ?? '—'} ft`)}
       </text>
     </svg>
   )

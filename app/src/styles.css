@@ -335,6 +335,10 @@ input.field, select.field {
 .sheet .thumb { height: 54px; border-radius: 3px; }
 .sheet .daytitle { font-weight: 700; margin: 10px 0 4px; font-size: 12.5px; }
 
+@media (max-width: 480px) {
+  .sheet { padding: 20px 14px; }
+}
+
 @media print {
   body { background: #fff; }
   .topbar, .exportbar, .fab-note { display: none !important; }
