@@ -20,12 +20,14 @@ ready-mix truck at a construction site. Values may be printed OR handwritten —
 read both carefully. Extract:
 - truck_no: the truck number
 - ticket_no: the ticket/load number
-- volume_cy: the volume of THIS load in cubic yards. Tickets label this many
+- volume_cy: the volume of THIS load, in cubic yards. Tickets label this many
   ways: "LOAD QTY", "THIS LOAD", "QTY", "LOAD", "YDS", "CY", "DEL QTY", or a
   bare number near the mix line. It is often handwritten. If both a load
   quantity and a cumulative/total-to-date quantity appear, return the load
-  quantity (usually the smaller number). Only return null if no per-load
-  quantity is anywhere on the ticket.
+  quantity (usually the smaller number). CHECK THE UNIT: metric tickets show
+  cubic metres ("m3", "cubic metres") — convert those to cubic yards by
+  multiplying by 1.308 and round to one decimal (e.g. 6.00 m3 -> 7.8).
+  Only return null if no per-load quantity is anywhere on the ticket.
 - mix_code: the mix design code or ID as printed
 - strength_psi: the design strength in psi, if shown
 - supplier: the ready-mix supplier or plant name
