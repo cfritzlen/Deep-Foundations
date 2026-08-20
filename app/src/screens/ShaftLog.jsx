@@ -248,6 +248,7 @@ export default function ShaftLog({ pile, job, onExport }) {
                     <div style={{ flex: 1 }}>
                       <div className="tno">Truck {t.truck_no || '—'} · Ticket {t.ticket_no || '—'} · {t.volume_cy ?? '—'} CY</div>
                       <div className="muted">
+                        {t.supplier ? `${t.supplier} · ` : ''}
                         {t.slump_in != null ? `Slump ${t.slump_in}" · ` : ''}
                         {t.air_pct != null ? `Air ${t.air_pct}% · ` : ''}
                         {t.temp_f != null ? `${t.temp_f}°F · ` : ''}
@@ -424,6 +425,7 @@ function TicketModal({ mix, existing, muteMix, onMuteRestOfPour, onMismatch, onV
   const [f, setF] = useState(() => existing ? {
     truck_no: existing.truck_no ?? '',
     ticket_no: existing.ticket_no ?? '',
+    supplier: existing.supplier ?? '',
     volume_cy: existing.volume_cy ?? '',
     slump_in: existing.slump_in ?? '',
     air_pct: existing.air_pct ?? '',
@@ -446,6 +448,7 @@ function TicketModal({ mix, existing, muteMix, onMuteRestOfPour, onMismatch, onV
         ...o,
         truck_no: r.truck_no ?? o.truck_no,
         ticket_no: r.ticket_no ?? o.ticket_no,
+        supplier: r.supplier ?? o.supplier,
         volume_cy: r.volume_cy ?? o.volume_cy,
       }))
       if (mix && (r.mix_code || r.strength_psi)) {
@@ -509,6 +512,7 @@ function TicketModal({ mix, existing, muteMix, onMuteRestOfPour, onMismatch, onV
         {field('Truck #', 'truck_no')}
         {field('Ticket #', 'ticket_no')}
       </div>
+      {field('Concrete vendor', 'supplier')}
       {field('Volume — this load (CY)', 'volume_cy', 'decimal')}
       <div className="btnrow">
         {field('Slump (in)', 'slump_in', 'decimal')}
@@ -522,6 +526,7 @@ function TicketModal({ mix, existing, muteMix, onMuteRestOfPour, onMismatch, onV
         onClick={() => onSave({
           truck_no: f.truck_no || null,
           ticket_no: f.ticket_no || null,
+          supplier: f.supplier || null,
           volume_cy: num(f.volume_cy),
           slump_in: num(f.slump_in),
           air_pct: num(f.air_pct),

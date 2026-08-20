@@ -114,6 +114,7 @@ create table bedrock_concrete_tickets (
   ts timestamptz not null default now(),
   truck_no text,
   ticket_no text,
+  supplier text,
   volume_cy numeric,
   photo_path text,                     -- path in the 'bedrock-tickets' storage bucket
   slump_in numeric,
@@ -294,9 +295,9 @@ select id, ts, event_type, data::jsonb from bedrock_piles p, (values
   ((current_date - 3) + time '16:40', 'pour_end',           '{"total_cy": 30, "theoretical_cy": 28.5}')
 ) v(ts, event_type, data)
 where p.label='SH-1' and p.pile_kind='shaft';
-insert into bedrock_concrete_tickets (pile_id, ts, truck_no, ticket_no, volume_cy,
+insert into bedrock_concrete_tickets (pile_id, ts, truck_no, ticket_no, supplier, volume_cy,
                               slump_in, air_pct, temp_f, cylinders)
-select id, ts, truck_no, ticket_no, cy, slump, air, temp, cyl from bedrock_piles p, (values
+select id, ts, truck_no, ticket_no, 'Colonial Concrete Corp.', cy, slump, air, temp, cyl from bedrock_piles p, (values
   ((current_date - 3) + time '14:05','CC-214','88121', 10.0, 8.5, 4.2, 78, 4),
   ((current_date - 3) + time '15:10','CC-208','88134', 10.0, 8.0, 4.5, 80, 0),
   ((current_date - 3) + time '16:05','CC-214','88142', 10.0, 8.5, 4.0, 79, 0)
