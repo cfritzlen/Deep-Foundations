@@ -6,6 +6,7 @@ import PileList from './screens/PileList.jsx'
 import ShaftLog from './screens/ShaftLog.jsx'
 import DriveLog from './screens/DriveLog.jsx'
 import ExportLog from './screens/ExportLog.jsx'
+import ObstructionLog from './screens/ObstructionLog.jsx'
 
 export default function App() {
   const [view, setView] = useState({ name: 'jobs' })
@@ -29,6 +30,7 @@ export default function App() {
 
   const back = () => {
     if (view.name === 'piles') setView({ name: 'jobs' })
+    else if (view.name === 'obstructions') setView({ name: 'piles', job: view.job })
     else if (view.name === 'log') setView({ name: 'piles', job: view.job })
     else if (view.name === 'export') setView({ name: 'log', job: view.job, pile: view.pile })
   }
@@ -38,8 +40,11 @@ export default function App() {
       <TopBar view={view} onBack={view.name !== 'jobs' ? back : null} />
       {view.name === 'jobs' && <JobPicker onPick={(job) => setView({ name: 'piles', job })} />}
       {view.name === 'piles' && (
-        <PileList job={view.job} onPick={(pile) => setView({ name: 'log', job: view.job, pile })} />
+        <PileList job={view.job}
+          onPick={(pile) => setView({ name: 'log', job: view.job, pile })}
+          onObstructions={() => setView({ name: 'obstructions', job: view.job })} />
       )}
+      {view.name === 'obstructions' && <ObstructionLog job={view.job} />}
       {view.name === 'log' &&
         (view.pile.pile_kind === 'shaft' ? (
           <ShaftLog

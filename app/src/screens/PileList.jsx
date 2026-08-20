@@ -9,7 +9,7 @@ const STATUS_LABEL = {
   rejected: 'Rejected',
 }
 
-export default function PileList({ job, onPick }) {
+export default function PileList({ job, onPick, onObstructions }) {
   const [piles, setPiles] = useState(null)
   const [err, setErr] = useState(null)
   const [q, setQ] = useState('')
@@ -34,9 +34,14 @@ export default function PileList({ job, onPick }) {
     <div className="screen">
       <div className="h1">{job.name}</div>
       {piles && (
-        <div className="muted" style={{ marginBottom: 10 }}>
-          {piles.length} piles · {counts.complete} complete · {counts.in_progress} in progress
-          {counts.rejected ? ` · ${counts.rejected} rejected` : ''}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <span className="muted">
+            {piles.length} piles · {counts.complete} complete · {counts.in_progress} in progress
+            {counts.rejected ? ` · ${counts.rejected} rejected` : ''}
+          </span>
+          <button className="chip" style={{ marginLeft: 'auto' }} onClick={onObstructions}>
+            ⚠ Obstruction log
+          </button>
         </div>
       )}
       <input

@@ -1,12 +1,15 @@
 {
-  // Cloudflare Workers config — static site (Vite build output)
+  // Cloudflare Workers config — static app + ticket-scan API route
   "name": "bedrock",
+  "main": "worker.js",
   "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
   "routes": [
     { "pattern": "bedrock.hardhatbenchmark.com", "custom_domain": true }
   ],
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   }
 }

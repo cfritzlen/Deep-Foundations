@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import {
   getPileBundle, getEquipment, startDay, endDay, addEvent, updateEvent, updatePile,
-  setPileStatus, addTicket, ticketPhotoUrl, currentDepth, isDrilling, openObstruction,
-  isPouring, fmtTime, fmtDate, todayStr,
+  setPileStatus, addTicket, ticketPhotoUrl, scanTicket, currentDepth, isDrilling,
+  openObstruction, isPouring, fmtTime, fmtDate, todayStr,
 } from '../lib/db.js'
 import { BigButton, Modal, NumPad, Chips, NoteFab, Loading, ErrBox } from '../components/ui.jsx'
 
@@ -338,6 +338,7 @@ export default function ShaftLog({ pile, job, onExport }) {
       )}
       {modal?.kind === 'ticket' && (
         <TicketModal
+          mix={p.mix}
           onClose={() => setModal(null)}
           onSave={run(async (fields, photo) => {
             await addTicket(p.id, fields, photo)
@@ -391,18 +392,61 @@ function InspectionModal({ result, onClose, onSave }) {
   )
 }
 
-function TicketModal({ onClose, onSave }) {
+function TicketModal({ mix, onClose, onSave }) {
   const [f, setF] = useState({})
   const [photo, setPhoto] = useState(null)
+  const [scanning, setScanning] = useState(false)
+  const [scanNote, setScanNote] = useState(null)
   const set = (k) => (e) => setF((o) => ({ ...o, [k]: e.target.value }))
   const num = (v) => (v === '' || v == null ? null : Number(v))
+
+  const doScan = async () => {
+    setScanning(true)
+    setScanNote(null)
+    try {
+      const r = await scanTicket(photo)
+      setF((o) => ({
+        ...o,
+        truck_no: r.truck_no ?? o.truck_no,
+        ticket_no: r.ticket_no ?? o.ticket_no,
+        volume_cy: r.volume_cy ?? o.volume_cy,
+      }))
+      if (mix && (r.mix_code || r.strength_psi)) {
+        const codeMatch = r.mix_code && mix.code &&
+          r.mix_code.toLowerCase().replace(/[^a-z0-9]/g, '').includes(mix.code.toLowerCase().replace(/[^a-z0-9]/g, ''))
+        const psiMatch = r.strength_psi && Number(r.strength_psi) === Number(mix.strength_psi)
+        setScanNote(codeMatch || psiMatch
+          ? { ok: true, text: `✓ Ticket mix ${r.mix_code ?? r.strength_psi + ' psi'} matches ${mix.code}` }
+          : { ok: false, text: `⚠ Ticket shows ${r.mix_code ?? ''} ${r.strength_psi ? r.strength_psi + ' psi' : ''} — this shaft calls for ${mix.code} (${mix.strength_psi} psi)` })
+      } else {
+        setScanNote({ ok: true, text: '✓ Ticket read — check the fields below' })
+      }
+    } catch (e) {
+      setScanNote({ ok: false, text: e.message })
+    } finally {
+      setScanning(false)
+    }
+  }
+
   return (
     <Modal title="Concrete truck" sub="Snap the ticket — everything else is optional." onClose={onClose}>
       <label className="bigbtn ghost" style={{ display: 'block', textAlign: 'center', lineHeight: 1.3 }}>
         {photo ? `📷 ${photo.name}` : '📷 Photo of ticket'}
         <input type="file" accept="image/*" capture="environment" hidden
-          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+          onChange={(e) => { setPhoto(e.target.files?.[0] ?? null); setScanNote(null) }} />
       </label>
+      {photo && (
+        <BigButton color="gold" disabled={scanning} onClick={doScan}>
+          {scanning ? 'Reading ticket…' : '✨ Scan ticket'}
+          {!scanning && <small>Fills in the fields from the photo</small>}
+        </BigButton>
+      )}
+      {scanNote && (
+        <div className={scanNote.ok ? 'card' : 'errbox'}
+          style={scanNote.ok ? { padding: '10px 14px', color: 'var(--green)', fontWeight: 600 } : {}}>
+          {scanNote.text}
+        </div>
+      )}
       <input className="field" placeholder="Truck #" value={f.truck_no ?? ''} onChange={set('truck_no')} />
       <input className="field" placeholder="Ticket #" value={f.ticket_no ?? ''} onChange={set('ticket_no')} />
       <input className="field" placeholder="Volume (CY)" inputMode="decimal" value={f.volume_cy ?? ''} onChange={set('volume_cy')} />

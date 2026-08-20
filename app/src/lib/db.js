@@ -41,6 +41,18 @@ export async function getPileBundle(pileId) {
   return { pile, days, events, blows, tickets }
 }
 
+// Every obstruction event across a whole job, with its pile.
+export async function getJobObstructions(jobId) {
+  return ok(
+    await supabase
+      .from('bedrock_events')
+      .select('*, pile:bedrock_piles!inner(id, label, job_id)')
+      .in('event_type', ['obstruction_hit', 'obstruction_cleared'])
+      .eq('pile.job_id', jobId)
+      .order('ts')
+  )
+}
+
 // ---------- writes ----------
 
 export async function startDay(pileId, { equipmentId = null, engineer = null } = {}) {
@@ -149,6 +161,37 @@ export async function addTicket(pileId, fields, photoFile) {
       .select()
       .single()
   )
+}
+
+// Send a ticket photo to our server, which reads it with Claude.
+export async function scanTicket(file) {
+  const image = await compressToBase64(file)
+  const res = await fetch('/api/scan-ticket', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ image, media_type: 'image/jpeg' }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error || 'Scan failed')
+  return data
+}
+
+async function compressToBase64(file) {
+  const bmp = await createImageBitmap(file)
+  const maxDim = 1568
+  const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bmp.width * scale)
+  canvas.height = Math.round(bmp.height * scale)
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height)
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85))
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(fr.result)
+    fr.onerror = reject
+    fr.readAsDataURL(blob)
+  })
+  return dataUrl.split(',')[1]
 }
 
 export function ticketPhotoUrl(path) {
