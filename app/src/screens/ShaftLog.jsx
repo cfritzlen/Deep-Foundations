@@ -420,6 +420,7 @@ const EVENT_LABEL = {
   pile_failed: 'PILE FAILED',
   drive_start: 'Started driving',
   drive_end: 'End of drive',
+  pile_run: 'Pile ran',
   note: 'Note',
 }
 
@@ -455,6 +456,7 @@ export function describeEvent(e) {
     case 'pour_end': return d.total_cy != null ? `${d.total_cy} CY placed` : ''
     case 'drive_start': return `at ${d.start_depth_ft ?? 0} ft`
     case 'drive_end': return `at ${d.end_depth_ft ?? '?'} ft${d.criteria_met ? ` — ${d.criteria_met}` : ''}`
+    case 'pile_run': return `from ${d.from_ft} ft to ${d.to_ft} ft`
     case 'pile_failed': return `${d.reason ?? ''}${d.depth_ft != null ? ` at ${d.depth_ft} ft` : ''}`
     case 'note': return d.text ?? ''
     default: return ''

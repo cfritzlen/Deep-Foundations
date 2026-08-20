@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  getPileBundle, getEquipment, startDay, endDay, addEvent, updateEvent, addBlow, deleteBlow,
+  getPileBundle, getEquipment, startDay, endDay, addEvent, updateEvent, addBlow, addBlowRun, deleteBlow,
   failPile, setPileStatus, isDriving, openObstruction, fmtTime, todayStr,
 } from '../lib/db.js'
 import { BigButton, Modal, NumPad, Chips, NoteFab, Loading, ErrBox } from '../components/ui.jsx'
@@ -62,8 +62,10 @@ export default function DriveLog({ pile, job, onExport, onExit }) {
   }
 
   const logBlow = run(async () => {
+    if (entry === '') return
     const n = parseInt(entry, 10)
-    if (!n) return
+    if (isNaN(n)) return
+    // 0 is valid — the pile dropped through this foot without a full blow
     await addBlow(p.id, nextDepth, n, curStroke)
     setEntry('')
   })
@@ -131,12 +133,17 @@ export default function DriveLog({ pile, job, onExport, onExit }) {
                 </button>
               ))}
             </div>
-            {lastBlow && (
-              <button className="chip" style={{ marginTop: 10 }} disabled={busy}
-                onClick={run(async () => { await deleteBlow(lastBlow.id) })}>
-                ↩ Undo ft {lastBlow.depth_ft} ({lastBlow.blows} blows)
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <button className="chip" disabled={busy} onClick={() => setModal({ kind: 'run' })}>
+                ⇩ Pile ran
               </button>
-            )}
+              {lastBlow && (
+                <button className="chip" disabled={busy}
+                  onClick={run(async () => { await deleteBlow(lastBlow.id) })}>
+                  ↩ Undo ft {lastBlow.depth_ft} ({lastBlow.blows} blows)
+                </button>
+              )}
+            </div>
           </div>
 
           {obst ? (
@@ -169,7 +176,10 @@ export default function DriveLog({ pile, job, onExport, onExit }) {
             {[...blows].reverse().slice(0, 8).map((b) => (
               <li key={b.id}>
                 <span className="t">ft {b.depth_ft}</span>
-                <span className="what"><b>{b.blows} blows</b> · stroke {b.stroke_ft} ft</span>
+                <span className="what">
+                  {b.blows === 0 ? <b>ran</b> : <b>{b.blows} blows</b>}
+                  {b.stroke_ft != null && <> · stroke {b.stroke_ft} ft</>}
+                </span>
               </li>
             ))}
           </ul>
@@ -221,6 +231,19 @@ export default function DriveLog({ pile, job, onExport, onExit }) {
           onPick={run(async (crit) => {
             await addEvent(p.id, 'drive_end', { end_depth_ft: modal.finalDepth, criteria_met: crit })
             await setPileStatus(p.id, 'complete')
+            setModal(null)
+          })}
+        />
+      )}
+      {modal?.kind === 'run' && (
+        <NumPad title="Pile ran" sub={`Currently at ${lastBlow?.depth_ft ?? startDepth} ft — ran to what depth?`}
+          unit="ft" allowDecimal={false} submitLabel="Log run"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            const from = (lastBlow?.depth_ft ?? startDepth) + 1
+            if (v < from) return
+            await addBlowRun(p.id, from, v)
+            await addEvent(p.id, 'pile_run', { from_ft: from - 1, to_ft: v })
             setModal(null)
           })}
         />

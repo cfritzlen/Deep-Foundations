@@ -10,7 +10,7 @@ const EVENT_LABEL = {
   inspection: 'Inspection', socket_extension: 'Socket extended',
   cage_set: 'Cage set', pour_start: 'Pour started', pour_end: 'Pour ended',
   drive_start: 'Started driving', drive_end: 'End of drive',
-  pile_failed: 'PILE FAILED', note: 'Note',
+  pile_run: 'Pile ran', pile_failed: 'PILE FAILED', note: 'Note',
 }
 
 export default function ExportLog({ pile, job }) {
@@ -156,7 +156,11 @@ export default function ExportLog({ pile, job }) {
                   <thead><tr><th>Ft</th><th>Blows</th><th>Stroke</th></tr></thead>
                   <tbody>
                     {col.map((b) => (
-                      <tr key={b.id}><td>{b.depth_ft}</td><td>{b.blows}</td><td>{b.stroke_ft}</td></tr>
+                      <tr key={b.id}>
+                        <td>{b.depth_ft}</td>
+                        <td>{b.blows === 0 ? 'ran' : b.blows}</td>
+                        <td>{b.stroke_ft ?? '—'}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>

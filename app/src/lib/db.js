@@ -100,6 +100,15 @@ export async function addBlow(pileId, depthFt, blows, strokeFt) {
   )
 }
 
+// A "run": the pile dropped through several feet — record 0 blows for each.
+export async function addBlowRun(pileId, fromDepthFt, toDepthFt) {
+  const rows = []
+  for (let d = fromDepthFt; d <= toDepthFt; d++) {
+    rows.push({ pile_id: pileId, depth_ft: d, blows: 0, stroke_ft: null, ts: new Date().toISOString() })
+  }
+  return ok(await supabase.from('bedrock_blow_counts').insert(rows).select())
+}
+
 export async function deleteBlow(id) {
   return ok(await supabase.from('bedrock_blow_counts').delete().eq('id', id).select())
 }
