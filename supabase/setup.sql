@@ -207,55 +207,35 @@ select
 from generate_series(1,6) g;
 
 -- ============================================================
--- SAMPLE HISTORY (so exports & statuses have something to show)
+-- SAMPLE HISTORY — realistic mid-project state (~50% complete)
+-- Dates are relative to today so the demo always looks current.
 -- ============================================================
 
--- ---- B-1: driven to depth yesterday, complete ----
-update bedrock_piles set status='complete' where label='B-1' and pile_kind='driven';
-insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
-select id, current_date - 1,
-       (current_date - 1) + time '07:05', (current_date - 1) + time '09:40',
-       '20000000-0000-0000-0000-000000000001', 'C. Fritzlen'
-from bedrock_piles where label='B-1' and pile_kind='driven';
-insert into bedrock_events (pile_id, ts, event_type, data)
-select id, (current_date - 1) + time '07:12', 'drive_start', '{"start_depth_ft": 0}'
-from bedrock_piles where label='B-1' and pile_kind='driven';
-insert into bedrock_blow_counts (pile_id, depth_ft, blows, stroke_ft, ts)
-select p.id, g,
-       greatest(4, (6 + g/6 + floor(random()*4))::int),
-       round((5 + (g::numeric/30))::numeric, 1),
-       (current_date - 1) + time '07:12' + (g * interval '2 minutes')
-from bedrock_piles p, generate_series(1,63) g
-where p.label='B-1' and p.pile_kind='driven';
-insert into bedrock_events (pile_id, ts, event_type, data)
-select id, (current_date - 1) + time '09:31', 'drive_end',
-       '{"end_depth_ft": 63, "tip_elev_ft": -58.2, "criteria_met": "tip elevation"}'
-from bedrock_piles where label='B-1' and pile_kind='driven';
-
--- ---- A-7: refused early on an obstruction, rejected, replaced by A-7R ----
+-- ---- A-7: refused early on an obstruction 5 days ago, rejected,
+--      replacement A-7R created (driven to depth in the loop below) ----
 update bedrock_piles set status='rejected' where label='A-7' and pile_kind='driven';
 insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
-select id, current_date - 2,
-       (current_date - 2) + time '12:30', (current_date - 2) + time '13:55',
-       '20000000-0000-0000-0000-000000000002', 'C. Fritzlen'
+select id, current_date - 5,
+       (current_date - 5) + time '12:30', (current_date - 5) + time '13:55',
+       '20000000-0000-0000-0000-000000000002', 'D. Okafor'
 from bedrock_piles where label='A-7' and pile_kind='driven';
 insert into bedrock_events (pile_id, ts, event_type, data)
-select id, (current_date - 2) + time '12:41', 'drive_start', '{"start_depth_ft": 0}'
+select id, (current_date - 5) + time '12:41', 'drive_start', '{"start_depth_ft": 0}'
 from bedrock_piles where label='A-7' and pile_kind='driven';
 insert into bedrock_blow_counts (pile_id, depth_ft, blows, stroke_ft, ts)
 select p.id, g,
        case when g < 20 then (7 + floor(random()*4))::int else 20 + (g-19)*14 end,
        5.5,
-       (current_date - 2) + time '12:41' + (g * interval '2 minutes')
+       (current_date - 5) + time '12:41' + (g * interval '2 minutes')
 from bedrock_piles p, generate_series(1,22) g
 where p.label='A-7' and p.pile_kind='driven';
 insert into bedrock_events (pile_id, ts, event_type, data)
-select id, (current_date - 2) + time '13:32', 'obstruction_hit',
-       '{"depth_ft": 22, "type": "unknown - suspected timber crib"}'
+select id, (current_date - 5) + time '13:32', 'obstruction_hit',
+       '{"depth_ft": 22, "type": "Unknown", "note": "suspected timber crib"}'
 from bedrock_piles where label='A-7' and pile_kind='driven';
 insert into bedrock_events (pile_id, ts, event_type, data)
-select id, (current_date - 2) + time '13:50', 'pile_failed',
-       '{"reason": "refused early on obstruction", "depth_ft": 22}'
+select id, (current_date - 5) + time '13:50', 'pile_failed',
+       '{"reason": "Refused early", "depth_ft": 22}'
 from bedrock_piles where label='A-7' and pile_kind='driven';
 insert into bedrock_piles (job_id, label, pile_kind, description, length_ft,
                    required_tip_elev_ft, driving_criteria, replaces_pile_id, sort_order)
@@ -263,58 +243,208 @@ select job_id, 'A-7R', 'driven', description, length_ft,
        required_tip_elev_ft, driving_criteria, id, 100
 from bedrock_piles where label='A-7' and pile_kind='driven';
 
--- ---- SH-1: fully complete shaft — drilled over two days, failed first
---      inspection (+5 ft socket), cage + pour with 3 trucks ----
+-- ---- 13 driven piles completed over the last ~2.5 weeks ----
+-- Two rigs run in parallel (slot 0 = PD-1 / C. Fritzlen, slot 1 = PD-2 / D. Okafor).
+-- Blow counts rise with depth (soft over hard); B-2 runs from 9-12 ft;
+-- A-3 hits old dock timber at 14 ft (40 min lost).
+do $$
+declare
+  rec record;
+  pid uuid;
+  rig uuid;
+  eng text;
+  d date;
+  t_cursor timestamptz;
+  drive_start_ts timestamptz;
+  g int;
+  nblows int;
+  stroke numeric;
+begin
+  for rec in
+    select * from (values
+      ('A-1', 62, 0, 0), ('A-2', 63, 0, 1),
+      ('A-4', 61, 1, 0), ('A-5', 64, 1, 1),
+      ('A-6', 62, 2, 0), ('B-1', 63, 2, 1),
+      ('B-2', 62, 3, 0), ('B-3', 64, 3, 1),
+      ('B-4', 63, 4, 0), ('B-5', 61, 4, 1),
+      ('B-6', 63, 5, 0), ('A-3', 62, 5, 1),
+      ('A-7R', 63, 6, 0)
+    ) as v(lbl, final_ft, day_off, slot)
+  loop
+    select id into pid from bedrock_piles where label = rec.lbl and pile_kind = 'driven';
+    rig := case when rec.slot = 0 then '20000000-0000-0000-0000-000000000001'::uuid
+                else '20000000-0000-0000-0000-000000000002'::uuid end;
+    eng := case when rec.slot = 0 then 'C. Fritzlen' else 'D. Okafor' end;
+    d := current_date - 16 + rec.day_off * 2;
+    drive_start_ts := d + time '07:05' + (rec.slot * interval '95 minutes')
+                        + (floor(random()*20) * interval '1 minute');
+    t_cursor := drive_start_ts;
+
+    insert into bedrock_events (pile_id, ts, event_type, data)
+    values (pid, drive_start_ts, 'drive_start', '{"start_depth_ft": 0}');
+
+    for g in 1..rec.final_ft loop
+      t_cursor := t_cursor + interval '2 minutes';
+      if rec.lbl = 'B-2' and g between 9 and 12 then
+        insert into bedrock_blow_counts (pile_id, depth_ft, blows, stroke_ft, ts)
+        values (pid, g, 0, null, t_cursor);
+        continue;
+      end if;
+      if rec.lbl = 'A-3' and g = 14 then
+        insert into bedrock_events (pile_id, ts, event_type, data)
+        values (pid, t_cursor, 'obstruction_hit',
+                '{"depth_ft": 14, "type": "Timber", "note": "old dock piles"}');
+        t_cursor := t_cursor + interval '40 minutes';
+        insert into bedrock_events (pile_id, ts, event_type, data)
+        values (pid, t_cursor, 'obstruction_cleared', '{"depth_ft": 14}');
+      end if;
+      nblows := greatest(3, (4 + 32 * power(g::numeric / rec.final_ft, 2))::int
+                            + floor(random()*4)::int);
+      stroke := least(7.5, round((4.5 + 3.0 * g / rec.final_ft)::numeric, 1));
+      insert into bedrock_blow_counts (pile_id, depth_ft, blows, stroke_ft, ts)
+      values (pid, g, nblows, stroke, t_cursor);
+    end loop;
+
+    if rec.lbl = 'B-2' then
+      insert into bedrock_events (pile_id, ts, event_type, data)
+      values (pid, drive_start_ts + interval '26 minutes', 'pile_run',
+              '{"from_ft": 8, "to_ft": 12}');
+    end if;
+
+    insert into bedrock_events (pile_id, ts, event_type, data)
+    values (pid, t_cursor + interval '3 minutes', 'drive_end',
+            json_build_object('end_depth_ft', rec.final_ft,
+                              'tip_elev_ft', -58 - round((random()*0.6)::numeric, 1),
+                              'criteria_met', 'tip elevation')::jsonb);
+
+    insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
+    values (pid, d, drive_start_ts - interval '10 minutes',
+            t_cursor + interval '25 minutes', rig, eng);
+
+    update bedrock_piles set status = 'complete' where id = pid;
+  end loop;
+end $$;
+
+-- ---- B-7: mid-drive TODAY (in progress, 31 ft in) ----
+do $$
+declare pid uuid; t timestamptz; g int; nblows int;
+begin
+  select id into pid from bedrock_piles where label='B-7' and pile_kind='driven';
+  insert into bedrock_log_days (pile_id, work_date, day_start, equipment_id, engineer)
+  values (pid, current_date, current_date + time '06:55',
+          '20000000-0000-0000-0000-000000000001', 'C. Fritzlen');
+  insert into bedrock_events (pile_id, ts, event_type, data)
+  values (pid, current_date + time '07:08', 'drive_start', '{"start_depth_ft": 0}');
+  t := current_date + time '07:08';
+  for g in 1..31 loop
+    t := t + interval '2 minutes';
+    nblows := greatest(3, (4 + 32 * power(g::numeric / 63, 2))::int + floor(random()*4)::int);
+    insert into bedrock_blow_counts (pile_id, depth_ft, blows, stroke_ft, ts)
+    values (pid, g, nblows, round((4.5 + 3.0 * g / 63)::numeric, 1), t);
+  end loop;
+  update bedrock_piles set status='in_progress' where id=pid;
+end $$;
+
+-- ---- SH-1: complete — two days, boulder at 18 ft, failed first socket
+--      inspection (+5 ft), re-drill, pass, cage & 3-truck pour ----
 update bedrock_piles set status='complete', socket_extension_ft=5
  where label='SH-1' and pile_kind='shaft';
 insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
-select id, current_date - 4,
-       (current_date - 4) + time '07:00', (current_date - 4) + time '15:30',
+select id, current_date - 14,
+       (current_date - 14) + time '07:00', (current_date - 14) + time '15:30',
        '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
 from bedrock_piles where label='SH-1' and pile_kind='shaft';
 insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
-select id, current_date - 3,
-       (current_date - 3) + time '06:45', (current_date - 3) + time '17:10',
+select id, current_date - 13,
+       (current_date - 13) + time '06:45', (current_date - 13) + time '17:10',
        '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
 from bedrock_piles where label='SH-1' and pile_kind='shaft';
 insert into bedrock_events (pile_id, ts, event_type, data)
 select id, ts, event_type, data::jsonb from bedrock_piles p, (values
-  ((current_date - 4) + time '07:20', 'drill_start',        '{"start_depth_ft": 0}'),
-  ((current_date - 4) + time '10:05', 'obstruction_hit',    '{"depth_ft": 18, "type": "boulder"}'),
-  ((current_date - 4) + time '11:35', 'obstruction_cleared','{"depth_ft": 18}'),
-  ((current_date - 4) + time '15:20', 'drill_end',          '{"end_depth_ft": 38, "note": "casing seated at 35 ft"}'),
-  ((current_date - 3) + time '06:55', 'drill_start',        '{"start_depth_ft": 38}'),
-  ((current_date - 3) + time '09:40', 'drill_end',          '{"end_depth_ft": 50}'),
-  ((current_date - 3) + time '10:15', 'inspection',         '{"result": "fail", "inspector": "GeoTech NY - R. Alvarez", "note": "soft seams in socket sidewall"}'),
-  ((current_date - 3) + time '10:20', 'socket_extension',   '{"added_ft": 5, "new_required_socket_ft": 20}'),
-  ((current_date - 3) + time '10:30', 'drill_start',        '{"start_depth_ft": 50}'),
-  ((current_date - 3) + time '12:10', 'drill_end',          '{"end_depth_ft": 55}'),
-  ((current_date - 3) + time '12:45', 'inspection',         '{"result": "pass", "inspector": "GeoTech NY - R. Alvarez"}'),
-  ((current_date - 3) + time '13:30', 'cage_set',           '{"cage": "72 in x 55 ft, #11 verticals"}'),
-  ((current_date - 3) + time '14:05', 'pour_start',         '{}'),
-  ((current_date - 3) + time '16:40', 'pour_end',           '{"total_cy": 30, "theoretical_cy": 28.5}')
+  ((current_date - 14) + time '07:20', 'drill_start',        '{"start_depth_ft": 0}'),
+  ((current_date - 14) + time '10:05', 'obstruction_hit',    '{"depth_ft": 18, "type": "Boulder"}'),
+  ((current_date - 14) + time '11:35', 'obstruction_cleared','{"depth_ft": 18}'),
+  ((current_date - 14) + time '14:20', 'rock_reached',       '{"depth_ft": 35}'),
+  ((current_date - 14) + time '15:20', 'drill_end',          '{"end_depth_ft": 38, "note": "casing seated at 35 ft"}'),
+  ((current_date - 13) + time '06:55', 'drill_start',        '{"start_depth_ft": 38}'),
+  ((current_date - 13) + time '09:40', 'drill_end',          '{"end_depth_ft": 50}'),
+  ((current_date - 13) + time '10:15', 'inspection',         '{"result": "fail", "inspector": "GeoTech NY - R. Alvarez", "note": "soft seams in socket sidewall"}'),
+  ((current_date - 13) + time '10:20', 'socket_extension',   '{"added_ft": 5, "new_required_socket_ft": 20}'),
+  ((current_date - 13) + time '10:30', 'drill_start',        '{"start_depth_ft": 50}'),
+  ((current_date - 13) + time '12:10', 'drill_end',          '{"end_depth_ft": 55}'),
+  ((current_date - 13) + time '12:45', 'inspection',         '{"result": "pass", "inspector": "GeoTech NY - R. Alvarez"}'),
+  ((current_date - 13) + time '13:30', 'cage_set',           '{"cage": "72 in x 55 ft, #11 verticals"}'),
+  ((current_date - 13) + time '14:05', 'pour_start',         '{}'),
+  ((current_date - 13) + time '16:40', 'pour_end',           '{"total_cy": 30}')
 ) v(ts, event_type, data)
 where p.label='SH-1' and p.pile_kind='shaft';
 insert into bedrock_concrete_tickets (pile_id, ts, truck_no, ticket_no, supplier, volume_cy,
                               slump_in, air_pct, temp_f, cylinders)
-select id, ts, truck_no, ticket_no, 'Colonial Concrete Corp.', cy, slump, air, temp, cyl from bedrock_piles p, (values
-  ((current_date - 3) + time '14:05','CC-214','88121', 10.0, 8.5, 4.2, 78, 4),
-  ((current_date - 3) + time '15:10','CC-208','88134', 10.0, 8.0, 4.5, 80, 0),
-  ((current_date - 3) + time '16:05','CC-214','88142', 10.0, 8.5, 4.0, 79, 0)
+select id, ts, truck_no, ticket_no, 'Colonial Concrete Corp.', cy, slump, air, temp, cyl
+from bedrock_piles p, (values
+  ((current_date - 13) + time '14:05','CC-214','88121', 10.0, 8.5, 4.2, 78, 4),
+  ((current_date - 13) + time '15:10','CC-208','88134', 10.0, 8.0, 4.5, 80, 0),
+  ((current_date - 13) + time '16:05','CC-214','88142', 10.0, 8.5, 4.0, 79, 0)
 ) v(ts, truck_no, ticket_no, cy, slump, air, temp, cyl)
 where p.label='SH-1' and p.pile_kind='shaft';
 
--- ---- SH-2: in progress — drilling stopped mid-shaft yesterday ----
-update bedrock_piles set status='in_progress' where label='SH-2' and pile_kind='shaft';
+-- ---- SH-2: complete — clean two-day shaft, passed first inspection,
+--      4-truck pour ----
+update bedrock_piles set status='complete' where label='SH-2' and pile_kind='shaft';
 insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
-select id, current_date - 1,
-       (current_date - 1) + time '07:15', (current_date - 1) + time '15:45',
+select id, current_date - 8,
+       (current_date - 8) + time '07:10', (current_date - 8) + time '15:20',
+       '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
+from bedrock_piles where label='SH-2' and pile_kind='shaft';
+insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
+select id, current_date - 7,
+       (current_date - 7) + time '06:50', (current_date - 7) + time '14:45',
        '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
 from bedrock_piles where label='SH-2' and pile_kind='shaft';
 insert into bedrock_events (pile_id, ts, event_type, data)
 select id, ts, event_type, data::jsonb from bedrock_piles p, (values
-  ((current_date - 1) + time '07:40', 'drill_start', '{"start_depth_ft": 0}'),
-  ((current_date - 1) + time '13:20', 'note',        '{"text": "Slow going 20-25 ft, wet sand, added casing ahead of auger"}'),
-  ((current_date - 1) + time '15:35', 'drill_end',   '{"end_depth_ft": 27}')
+  ((current_date - 8) + time '07:25', 'drill_start',  '{"start_depth_ft": 0}'),
+  ((current_date - 8) + time '11:50', 'note',         '{"text": "Wet sand 8-14 ft, kept casing ahead of auger"}'),
+  ((current_date - 8) + time '14:10', 'rock_reached', '{"depth_ft": 34}'),
+  ((current_date - 8) + time '15:05', 'drill_end',    '{"end_depth_ft": 36, "note": "casing seated at 35 ft"}'),
+  ((current_date - 7) + time '06:58', 'drill_start',  '{"start_depth_ft": 36}'),
+  ((current_date - 7) + time '09:20', 'drill_end',    '{"end_depth_ft": 49}'),
+  ((current_date - 7) + time '09:55', 'inspection',   '{"result": "pass", "inspector": "GeoTech NY - R. Alvarez", "note": "clean socket, 15 ft sound rock"}'),
+  ((current_date - 7) + time '10:40', 'cage_set',     '{"cage": "72 in x 50 ft, #11 verticals"}'),
+  ((current_date - 7) + time '11:10', 'pour_start',   '{}'),
+  ((current_date - 7) + time '14:00', 'pour_end',     '{"total_cy": 32.5}')
 ) v(ts, event_type, data)
 where p.label='SH-2' and p.pile_kind='shaft';
+insert into bedrock_concrete_tickets (pile_id, ts, truck_no, ticket_no, supplier, volume_cy,
+                              slump_in, air_pct, temp_f, cylinders)
+select id, ts, truck_no, ticket_no, 'Colonial Concrete Corp.', cy, slump, air, temp, cyl
+from bedrock_piles p, (values
+  ((current_date - 7) + time '11:10','CC-211','89012', 8.5, 8.0, 4.4, 82, 4),
+  ((current_date - 7) + time '11:55','CC-217','89025', 8.5, null, null, null, 0),
+  ((current_date - 7) + time '12:40','CC-211','89033', 8.5, 8.5, 4.1, 83, 0),
+  ((current_date - 7) + time '13:30','CC-224','89041', 7.0, null, null, null, 0)
+) v(ts, truck_no, ticket_no, cy, slump, air, temp, cyl)
+where p.label='SH-2' and p.pile_kind='shaft';
+
+-- ---- SH-3: in progress — started yesterday, drilling continues today ----
+update bedrock_piles set status='in_progress' where label='SH-3' and pile_kind='shaft';
+insert into bedrock_log_days (pile_id, work_date, day_start, day_end, equipment_id, engineer)
+select id, current_date - 1,
+       (current_date - 1) + time '07:15', (current_date - 1) + time '15:40',
+       '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
+from bedrock_piles where label='SH-3' and pile_kind='shaft';
+insert into bedrock_log_days (pile_id, work_date, day_start, equipment_id, engineer)
+select id, current_date, current_date + time '06:58',
+       '20000000-0000-0000-0000-000000000003', 'C. Fritzlen'
+from bedrock_piles where label='SH-3' and pile_kind='shaft';
+insert into bedrock_events (pile_id, ts, event_type, data)
+select id, ts, event_type, data::jsonb from bedrock_piles p, (values
+  ((current_date - 1) + time '07:35', 'drill_start',        '{"start_depth_ft": 0}'),
+  ((current_date - 1) + time '10:20', 'obstruction_hit',    '{"depth_ft": 12, "type": "Boulder"}'),
+  ((current_date - 1) + time '11:15', 'obstruction_cleared','{"depth_ft": 12}'),
+  ((current_date - 1) + time '13:00', 'note',               '{"text": "Slow drilling 14-18 ft, dense glacial till"}'),
+  ((current_date - 1) + time '15:30', 'drill_end',          '{"end_depth_ft": 19}'),
+  (current_date + time '07:12',       'drill_start',        '{"start_depth_ft": 19}'),
+  (current_date + time '09:05',       'drill_end',          '{"end_depth_ft": 26}')
+) v(ts, event_type, data)
+where p.label='SH-3' and p.pile_kind='shaft';
