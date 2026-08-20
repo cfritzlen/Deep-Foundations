@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getPileBundle, addEvent, ticketPhotoUrl, fmtTime, fmtDate } from '../lib/db.js'
+import { getPileBundle, addEvent, ticketPhotoUrl, currentDepth, fmtTime, fmtDate } from '../lib/db.js'
 import { COMPANY } from '../lib/config.js'
 import { BigButton, Modal, Chips, SignaturePad, Loading, ErrBox } from '../components/ui.jsx'
 import { describeEvent } from './ShaftLog.jsx'
@@ -11,7 +11,7 @@ const EVENT_LABEL = {
   cage_set: 'Cage set', pour_start: 'Pour started', pour_end: 'Pour ended',
   drive_start: 'Started driving', drive_end: 'End of drive',
   pile_run: 'Pile ran', pile_failed: 'PILE FAILED',
-  signature: 'Log signed', note: 'Note',
+  rock_reached: 'Top of rock', signature: 'Log signed', note: 'Note',
 }
 
 const SIGN_ROLES = ['Field Engineer', 'Superintendent', 'Inspector']
@@ -40,6 +40,15 @@ export default function ExportLog({ pile, job }) {
   // latest signature per role
   const sigs = {}
   for (const e of events) if (e.event_type === 'signature') sigs[e.data.role] = e
+  // sketch geometry
+  const finalDepth = isShaft ? currentDepth(events) : (blows.length ? blows[blows.length - 1].depth_ft : 0)
+  const rockEvent = [...events].reverse().find((e) => e.event_type === 'rock_reached')
+  const socketTotal = Number(p.required_socket_depth_ft ?? 0) + socketExt
+  const topOfRock = rockEvent
+    ? Number(rockEvent.data.depth_ft)
+    : finalDepth > socketTotal ? finalDepth - socketTotal : Number(p.required_casing_depth_ft ?? 0)
+  const driveEnd = [...events].reverse().find((e) => e.event_type === 'drive_end')
+  const tipElev = driveEnd?.data?.tip_elev_ft ?? null
 
   return (
     <div className="screen">
@@ -71,7 +80,8 @@ export default function ExportLog({ pile, job }) {
 
         {/* summary — stays pre-filled even on the blank form */}
         <h4>Project & {isShaft ? 'Shaft' : 'Pile'} Data</h4>
-        <table className="info"><tbody>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <table className="info" style={{ flex: '1 1 300px', width: 'auto' }}><tbody>
           <tr><td className="l">Project</td><td>{job.name}, {job.location}</td>
               <td className="l">{isShaft ? 'Shaft' : 'Pile'}</td><td><b>{p.label}</b> — {p.description}</td></tr>
           <tr>
@@ -112,6 +122,9 @@ export default function ExportLog({ pile, job }) {
             </td></tr>
           )}
         </tbody></table>
+        <PileSketch p={p} isShaft={isShaft} blank={blank} finalDepth={finalDepth}
+          topOfRock={topOfRock} socketTotal={socketTotal} tipElev={tipElev} />
+        </div>
 
         {/* work days */}
         <h4>Work Days</h4>
@@ -276,6 +289,95 @@ function SignModal({ taken, onClose, onSave }) {
         Save signature
       </BigButton>
     </Modal>
+  )
+}
+
+// Small elevation sketch of the pile, drawn from the log data.
+function PileSketch({ p, isShaft, blank, finalDepth, topOfRock, socketTotal, tipElev }) {
+  const navy = '#16233d', gold = '#c98f12', gray = '#8b93a1'
+  const W = 190, H = 290, groundY = 26, drawH = 235
+  const label = { fontSize: 8.5, fill: navy, fontFamily: 'Barlow, sans-serif' }
+
+  if (isShaft) {
+    const casing = Number(p.required_casing_depth_ft ?? 0)
+    const D = Math.max(finalDepth, casing + socketTotal, 1)
+    const s = drawH / D
+    const y = (d) => groundY + d * s
+    const rock = Math.min(topOfRock, D)
+    const socketDrilled = Math.max(0, finalDepth - rock)
+    const xL = 30, xR = 74
+    return (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flex: '0 0 auto' }}>
+        <defs>
+          <pattern id="rockhatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={gray} strokeWidth="1" />
+          </pattern>
+        </defs>
+        {/* ground */}
+        <line x1="6" y1={groundY} x2="88" y2={groundY} stroke={navy} strokeWidth="1.5" />
+        {[10, 16, 22].map((x) => <line key={x} x1={x} y1={groundY} x2={x - 4} y2={groundY + 5} stroke={navy} strokeWidth="1" />)}
+        {/* rock on both sides of the shaft */}
+        <rect x="6" y={y(rock)} width={xL - 6} height={y(D) - y(rock)} fill="url(#rockhatch)" />
+        <rect x={xR} y={y(rock)} width={88 - xR} height={y(D) - y(rock)} fill="url(#rockhatch)" />
+        <line x1="6" y1={y(rock)} x2="88" y2={y(rock)} stroke={gray} strokeWidth="1" />
+        {/* shaft */}
+        <rect x={xL} y={groundY} width={xR - xL} height={y(finalDepth || D) - groundY} fill={blank ? 'none' : '#eef1f6'} stroke={navy} strokeWidth="1.2" />
+        {/* casing (heavier walls) */}
+        <line x1={xL - 1.5} y1={groundY} x2={xL - 1.5} y2={y(casing)} stroke={navy} strokeWidth="3" />
+        <line x1={xR + 1.5} y1={groundY} x2={xR + 1.5} y2={y(casing)} stroke={navy} strokeWidth="3" />
+        {/* socket zone */}
+        {!blank && socketDrilled > 0 && (
+          <rect x={xL} y={y(rock)} width={xR - xL} height={y(finalDepth) - y(rock)} fill="#dfe6f0" stroke={navy} strokeWidth="1.2" />
+        )}
+        {/* labels */}
+        <text x="95" y={groundY + 3} style={label}>Grade — 0 ft</text>
+        <line x1="88" y1={y(casing)} x2="93" y2={y(casing)} stroke={gray} strokeWidth="0.8" />
+        <text x="95" y={y(casing) + 3} style={label}>Casing {casing} ft</text>
+        <line x1="88" y1={y(rock)} x2="93" y2={y(rock)} stroke={gray} strokeWidth="0.8" />
+        <text x="95" y={y(rock) + 11} style={label}>Rock @ {blank ? '____' : `${rock} ft`}</text>
+        <text x="95" y={(y(rock) + y(D)) / 2 + 3} style={{ ...label, fill: gold, fontWeight: 700 }}>
+          Socket {blank ? '____' : `${socketDrilled} ft`}
+        </text>
+        <text x="95" y={(y(rock) + y(D)) / 2 + 13} style={{ ...label, fill: gray }}>req {socketTotal} ft</text>
+        <line x1="88" y1={y(finalDepth || D)} x2="93" y2={y(finalDepth || D)} stroke={gray} strokeWidth="0.8" />
+        <text x="95" y={y(finalDepth || D) + 3} style={{ ...label, fontWeight: 700 }}>
+          Tip {blank ? '____' : `${finalDepth} ft`}
+        </text>
+      </svg>
+    )
+  }
+
+  // driven pile
+  const L = Number(p.length_ft ?? 60)
+  const E = finalDepth || 0
+  const D = Math.max(L, E, 1)
+  const s = (drawH - 14) / D
+  const gy = groundY + 14
+  const y = (d) => gy + d * s
+  const stickup = Math.max(0, L - E)
+  const xL = 46, xR = 60
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ flex: '0 0 auto' }}>
+      <line x1="6" y1={gy} x2="88" y2={gy} stroke={navy} strokeWidth="1.5" />
+      {[10, 16, 22, 78, 84].map((x) => <line key={x} x1={x} y1={gy} x2={x - 4} y2={gy + 5} stroke={navy} strokeWidth="1" />)}
+      {/* pile */}
+      <rect x={xL} y={gy - stickup * s} width={xR - xL} height={(blank ? L : E + stickup) * s}
+        fill={blank ? 'none' : '#eef1f6'} stroke={navy} strokeWidth="1.2" />
+      <line x1={(xL + xR) / 2} y1={gy - stickup * s} x2={(xL + xR) / 2} y2={y(blank ? L : E)} stroke={navy} strokeWidth="0.7" strokeDasharray="3 2" />
+      {/* labels */}
+      <text x="95" y={gy + 3} style={label}>Grade — 0 ft</text>
+      <text x="95" y={gy - 8} style={{ ...label, fill: gray }}>{p.description} · {L} ft long</text>
+      <text x="95" y={(gy + y(blank ? L : E)) / 2} style={{ ...label, fill: gold, fontWeight: 700 }}>
+        Embedment {blank ? '____' : `${E} ft`}
+      </text>
+      <line x1="88" y1={y(blank ? L : E)} x2="93" y2={y(blank ? L : E)} stroke={gray} strokeWidth="0.8" />
+      <text x="95" y={y(blank ? L : E) + 3} style={{ ...label, fontWeight: 700 }}>
+        Tip {blank ? '____' : `${E} ft`}
+      </text>
+      <text x="95" y={y(blank ? L : E) + 13} style={{ ...label, fill: gray }}>
+        {tipElev != null ? `elev ${tipElev} ft` : `req tip elev ${p.required_tip_elev_ft ?? '—'} ft`}
+      </text>
+    </svg>
   )
 }
 

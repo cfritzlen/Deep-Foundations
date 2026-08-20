@@ -41,6 +41,9 @@ export default function ShaftLog({ pile, job, onExport }) {
   const inspections = events.filter((e) => e.event_type === 'inspection')
   const lastInspection = inspections[inspections.length - 1]
   const totalCy = tickets.reduce((s, t) => s + Number(t.volume_cy || 0), 0)
+  const rockEvent = [...events].reverse().find((e) => e.event_type === 'rock_reached')
+  const topOfRock = rockEvent ? Number(rockEvent.data.depth_ft) : null
+  const socketDrilled = topOfRock != null ? Math.max(0, depth - topOfRock) : null
 
   const run = (fn) => async (...args) => {
     if (busy) return
@@ -81,12 +84,14 @@ export default function ShaftLog({ pile, job, onExport }) {
         <div style={{ textAlign: 'right', fontSize: '0.8rem', lineHeight: 1.5 }}>
           <div>Casing req: <b>{p.required_casing_depth_ft} ft</b></div>
           <div>
-            Socket req:{' '}
+            Socket:{' '}
             <b>
+              {socketDrilled != null ? `${socketDrilled} / ` : 'req '}
               {requiredSocket + socketExt} ft
               {socketExt > 0 && <span style={{ color: 'var(--gold)' }}> (+{socketExt})</span>}
             </b>
           </div>
+          {topOfRock != null && <div>Rock @ <b>{topOfRock} ft</b></div>}
         </div>
       </div>
 
@@ -127,17 +132,25 @@ export default function ShaftLog({ pile, job, onExport }) {
           {!drilling ? (
             <BigButton disabled={busy} onClick={() => setModal({ kind: 'drill_start' })}>
               Start drilling
+              {topOfRock == null && depth > 0 && <small>Still in overburden</small>}
+              {topOfRock != null && <small>In rock — {socketDrilled} ft of socket so far</small>}
             </BigButton>
           ) : (
             <BigButton color="green" disabled={busy} onClick={() => setModal({ kind: 'drill_end' })}>
               Stop drilling
+              {topOfRock == null && <small>Still in overburden</small>}
+              {topOfRock != null && <small>In rock — {socketDrilled} ft of socket so far</small>}
             </BigButton>
           )}
 
-          <BigButton color="ghost" disabled={busy} onClick={() => setModal({ kind: 'socket_ext' })}>
-            + Extend socket
-            <small>After a failed inspection</small>
-          </BigButton>
+          <div className="chips" style={{ marginTop: 2 }}>
+            <button className="chip" disabled={busy} onClick={() => setModal({ kind: 'rock' })}>
+              ⛰ {topOfRock == null ? 'Top of rock' : `Rock @ ${topOfRock} ft`}
+            </button>
+            <button className="chip" disabled={busy} onClick={() => setModal({ kind: 'socket_ext' })}>
+              + Extend socket
+            </button>
+          </div>
         </>
       )}
 
@@ -283,6 +296,16 @@ export default function ShaftLog({ pile, job, onExport }) {
           })}
         />
       )}
+      {modal?.kind === 'rock' && (
+        <NumPad title="Top of rock" sub="Depth where rock was encountered — splits the log into overburden vs socket"
+          unit="ft" initial={depth || ''} submitLabel="Set"
+          onCancel={() => setModal(null)}
+          onSubmit={run(async (v) => {
+            await addEvent(p.id, 'rock_reached', { depth_ft: v })
+            setModal(null)
+          })}
+        />
+      )}
       {modal?.kind === 'socket_ext' && (
         <NumPad title="Extend socket" sub={`Current requirement: ${requiredSocket + socketExt} ft of socket`}
           unit="ft added" initial="5" submitLabel="Add"
@@ -415,6 +438,7 @@ const EVENT_LABEL = {
   inspection: 'Inspection',
   socket_extension: 'Socket extended',
   cage_set: 'Cage set',
+  rock_reached: 'Top of rock',
   pour_start: 'Pour started',
   pour_end: 'Pour ended',
   pile_failed: 'PILE FAILED',
@@ -426,11 +450,13 @@ const EVENT_LABEL = {
 }
 
 export function Timeline({ events }) {
+  const [showAll, setShowAll] = useState(false)
   if (!events.length) return null
+  const shown = showAll ? events : events.slice(-3)
   return (
     <div className="card">
       <ul className="tl">
-        {events.map((e) => (
+        {shown.map((e) => (
           <li key={e.id}>
             <span className="t">
               {new Date(e.ts).toLocaleDateString([], { month: 'numeric', day: 'numeric' })} {fmtTime(e.ts)}
@@ -441,6 +467,11 @@ export function Timeline({ events }) {
           </li>
         ))}
       </ul>
+      {events.length > 3 && (
+        <button className="chip" style={{ marginTop: 8 }} onClick={() => setShowAll(!showAll)}>
+          {showAll ? '▴ Show less' : `▾ Full history (${events.length})`}
+        </button>
+      )}
     </div>
   )
 }
@@ -454,6 +485,7 @@ export function describeEvent(e) {
     case 'obstruction_cleared': return `at ${d.depth_ft ?? '?'} ft`
     case 'inspection': return `${(d.result || '').toUpperCase()}${d.inspector ? ` — ${d.inspector}` : ''}${d.note ? ` · ${d.note}` : ''}`
     case 'socket_extension': return `+${d.added_ft} ft (socket now ${d.new_required_socket_ft} ft)`
+    case 'rock_reached': return `at ${d.depth_ft} ft`
     case 'pour_end': return d.total_cy != null ? `${d.total_cy} CY placed` : ''
     case 'drive_start': return `at ${d.start_depth_ft ?? 0} ft`
     case 'drive_end': return `at ${d.end_depth_ft ?? '?'} ft${d.criteria_met ? ` — ${d.criteria_met}` : ''}`
@@ -466,10 +498,12 @@ export function describeEvent(e) {
 }
 
 export function DaysCard({ days }) {
+  const [showAll, setShowAll] = useState(false)
   if (!days.length) return null
+  const shown = showAll ? days : days.slice(-1)
   return (
     <div className="card">
-      {days.map((d) => (
+      {shown.map((d) => (
         <div key={d.id} className="kv">
           <span>{fmtDate(d.work_date)}</span>
           <b>
@@ -478,6 +512,11 @@ export function DaysCard({ days }) {
           </b>
         </div>
       ))}
+      {days.length > 1 && (
+        <button className="chip" style={{ marginTop: 8 }} onClick={() => setShowAll(!showAll)}>
+          {showAll ? '▴ Show less' : `▾ All days (${days.length})`}
+        </button>
+      )}
     </div>
   )
 }
